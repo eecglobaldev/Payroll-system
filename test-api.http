@@ -1,0 +1,170 @@
+# REST Client Test File
+# Install "REST Client" extension in VS Code to use this file
+# Click "Send Request" above each request to test
+
+### Variables
+@baseUrl = http://localhost:3000
+@apiKey = test-api-key-123
+@userId = 1464
+
+###############################################
+# PUBLIC ENDPOINTS (No API Key Required)
+###############################################
+
+### Health Check - Test if server is running
+GET {{baseUrl}}/api/ping
+
+### Database Health Check
+GET {{baseUrl}}/api/health
+
+###############################################
+# ATTENDANCE ENDPOINTS
+###############################################
+
+### Get Latest 10 Attendance Logs
+GET {{baseUrl}}/api/attendance/latest?limit=10
+x-api-key: {{apiKey}}
+
+### Get Latest 50 Attendance Logs
+GET {{baseUrl}}/api/attendance/latest?limit=50
+x-api-key: {{apiKey}}
+
+### Get Attendance by Date (Today)
+GET {{baseUrl}}/api/attendance/by-date?date=2025-12-09
+x-api-key: {{apiKey}}
+
+### Get Attendance by Date (December 1st)
+GET {{baseUrl}}/api/attendance/by-date?date=2025-12-01
+x-api-key: {{apiKey}}
+
+### Get Employee Attendance (User 1464, December 2025)
+GET {{baseUrl}}/api/attendance/employee/{{userId}}?start=2025-12-01&end=2025-12-31
+x-api-key: {{apiKey}}
+
+### Get Employee Attendance (User 1464, This Week)
+GET {{baseUrl}}/api/attendance/employee/{{userId}}?start=2025-12-01&end=2025-12-09
+x-api-key: {{apiKey}}
+
+### Get Attendance Summary (User 1464, December)
+GET {{baseUrl}}/api/attendance/summary/{{userId}}?start=2025-12-01&end=2025-12-31
+x-api-key: {{apiKey}}
+
+### Get Daily Attendance (User 1464, Today)
+GET {{baseUrl}}/api/attendance/daily/{{userId}}/2025-12-09
+x-api-key: {{apiKey}}
+
+### Get Daily Attendance (User 1464, December 1st)
+GET {{baseUrl}}/api/attendance/daily/{{userId}}/2025-12-01
+x-api-key: {{apiKey}}
+
+###############################################
+# SALARY ENDPOINTS
+###############################################
+
+### Calculate Salary (User 1464, December 2025)
+GET {{baseUrl}}/api/salary/{{userId}}?month=2025-12
+x-api-key: {{apiKey}}
+
+### Calculate Salary (Current Month)
+GET {{baseUrl}}/api/salary/{{userId}}
+x-api-key: {{apiKey}}
+
+### Get Monthly Hours Breakdown (User 1464, December)
+GET {{baseUrl}}/api/salary/{{userId}}/hours?month=2025-12
+x-api-key: {{apiKey}}
+
+### Get Daily Breakdown (User 1464, December)
+GET {{baseUrl}}/api/salary/{{userId}}/breakdown/2025-12
+x-api-key: {{apiKey}}
+
+### Batch Salary Calculation (Multiple Users)
+POST {{baseUrl}}/api/salary/batch
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "employeeCodes": [1464, 1465, 1466],
+  "month": "2025-12"
+}
+
+### Batch Salary Calculation (Single User)
+POST {{baseUrl}}/api/salary/batch
+x-api-key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "employeeCodes": [1464],
+  "month": "2025-12"
+}
+
+###############################################
+# EMPLOYEE ENDPOINTS (From Excel)
+###############################################
+
+### Get All Employees from Excel
+GET {{baseUrl}}/api/employees
+x-api-key: {{apiKey}}
+
+### Get Employee by Number (Employee #1)
+GET {{baseUrl}}/api/employees/1
+x-api-key: {{apiKey}}
+
+### Get Employee by Number (Your employee)
+GET {{baseUrl}}/api/employees/{{userId}}
+x-api-key: {{apiKey}}
+
+### Search Employee by Name
+GET {{baseUrl}}/api/employees/search?name=AMIT
+x-api-key: {{apiKey}}
+
+### Get Employees by Department
+GET {{baseUrl}}/api/employees/department/IT
+x-api-key: {{apiKey}}
+
+### Reload Excel Data (After updating Excel file)
+POST {{baseUrl}}/api/employees/reload
+x-api-key: {{apiKey}}
+
+###############################################
+# EMPLOYEE ENDPOINTS (Excel Data)
+###############################################
+
+### Get All Employees from Excel
+GET {{baseUrl}}/api/employees
+x-api-key: {{apiKey}}
+
+### Get Employee #1 Details
+GET {{baseUrl}}/api/employees/1
+x-api-key: {{apiKey}}
+
+### Search Employee by Name
+GET {{baseUrl}}/api/employees/search?name=AMIT
+x-api-key: {{apiKey}}
+
+### Get Employees by Department
+GET {{baseUrl}}/api/employees/department/IT
+x-api-key: {{apiKey}}
+
+### Reload Excel Data
+POST {{baseUrl}}/api/employees/reload
+x-api-key: {{apiKey}}
+
+###############################################
+# ERROR TESTING
+###############################################
+
+### Test Missing API Key (Should return 401)
+GET {{baseUrl}}/api/attendance/latest
+
+### Test Invalid API Key (Should return 401)
+GET {{baseUrl}}/api/attendance/latest
+x-api-key: wrong-key
+
+### Test Invalid Date Format (Should return 400)
+GET {{baseUrl}}/api/attendance/by-date?date=2025-13-01
+x-api-key: {{apiKey}}
+
+### Test Invalid User ID (Should return data or empty array)
+GET {{baseUrl}}/api/attendance/employee/99999?start=2025-12-01&end=2025-12-31
+x-api-key: {{apiKey}}
+
