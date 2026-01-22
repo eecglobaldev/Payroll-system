@@ -5,7 +5,7 @@ region: nyc
 services:
   - name: api
     github:
-      repo: EEC-AI-labs/Payroll_System
+      repo: eecglobaldev/Payroll-system
       branch: main
       deploy_on_push: true
     
@@ -96,7 +96,7 @@ services:
 static_sites:
   - name: admin-dashboard
     github:
-      repo: EEC-AI-labs/Payroll_System
+      repo: eecglobaldev/Payroll-system
       branch: main
       deploy_on_push: true
     

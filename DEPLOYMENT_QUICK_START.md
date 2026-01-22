@@ -11,7 +11,7 @@
 
 ### 1. Update app.yaml
 Edit `app.yaml` and replace:
-- `your-username/Attendance_project` → Your actual GitHub repo
+- Repository is already set to: `eecglobaldev/Payroll-system`
 - `your-db-host` → Your SQL Server hostname/IP
 - `your-database-name` → Your database name
 - `your-db-user` → Your database username
