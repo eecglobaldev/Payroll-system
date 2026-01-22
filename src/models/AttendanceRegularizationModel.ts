@@ -101,8 +101,8 @@ export class AttendanceRegularizationModel {
    * @param month Month in YYYY-MM format
    */
   static async getRegularizations(
-    employeeCode: string,
-    month: string
+    _employeeCode: string,
+    _month: string
   ): Promise<AttendanceRegularization[]> {
     const result = await query<AttendanceRegularization>(`
         SELECT 

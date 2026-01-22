@@ -1695,8 +1695,7 @@ export async function calculateSalary(
     // Overtime disabled by default if table doesn't exist
   }
 
-
-  const totalDeductions = parseFloat(lateDeduction.toFixed(2));
+  // Note: totalDeductions calculated later when adjustments are fetched
 
 
   // Calculate initial gross salary (includes overtime, but NOT incentive yet)

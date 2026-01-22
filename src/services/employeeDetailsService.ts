@@ -101,6 +101,7 @@ export class EmployeeDetailsService {
             branchLocation: details.BranchLocation,
             gender: details.Gender,
             phoneNumber: details.PhoneNumber,
+            shift: null, // Shift will be loaded separately if needed
             bankAccNo: details.BankAccNo || null,
             ifscCode: details.IFSCCode || null,
             isActive: details.ExitDate === null,
@@ -148,6 +149,7 @@ export class EmployeeDetailsService {
             branchLocation: detail.BranchLocation,
             gender: detail.Gender,
             phoneNumber: detail.PhoneNumber,
+            shift: null, // Shift will be loaded separately if needed
             bankAccNo: detail.BankAccNo || null,
             ifscCode: detail.IFSCCode || null,
             isActive: detail.ExitDate === null,

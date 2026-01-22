@@ -10,7 +10,6 @@
  * - Do NOT delete records; use ExitDate for inactive employees
  */
 
-import sql from 'mssql';
 import { query } from '../db/pool.js';
 import { EmployeeDetails, CreateEmployeeDetailsRequest, UpdateEmployeeDetailsRequest } from '../types/index.js';
 import { EmployeeModel } from './EmployeeModel.js';

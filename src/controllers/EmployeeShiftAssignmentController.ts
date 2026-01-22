@@ -6,7 +6,6 @@
 import { Request, Response } from 'express';
 import { EmployeeShiftAssignmentModel } from '../models/EmployeeShiftAssignmentModel.js';
 import { ShiftModel } from '../models/ShiftModel.js';
-import { CreateShiftAssignmentRequest } from '../types/index.js';
 
 export class EmployeeShiftAssignmentController {
   /**

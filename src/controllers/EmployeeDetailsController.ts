@@ -59,7 +59,7 @@ export class EmployeeDetailsController {
    * GET /api/employee-details
    * Get all active employees with details
    */
-  static async getAllActive(req: Request, res: Response): Promise<void> {
+  static async getAllActive(_req: Request, res: Response): Promise<void> {
     try {
       const employees = await EmployeeDetailsService.getAllActiveEmployeesWithDetails();
 
