@@ -10,6 +10,21 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // Production build configuration
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: false,
+    minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+        },
+      },
+    },
+  },
+  // Development server configuration
   server: {
     port: 5173,
     host: true, // Allow access from LAN devices
@@ -19,6 +34,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  // Preview server configuration (for testing production builds)
+  preview: {
+    port: 4173,
+    host: true,
   },
 });
 

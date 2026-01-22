@@ -21,7 +21,8 @@ export function getCurrentDeviceLogsTable(): string {
  */
 export function getDeviceLogsTableForMonth(month: string): string {
   const [year, monthNum] = month.split('-');
-  return `dbo.DeviceLogs_${monthNum}_${year}`;
+  const monthInt = parseInt(monthNum, 10);
+  return `dbo.DeviceLogs_${monthInt}_${year}`;
 }
 
 /**
@@ -30,7 +31,9 @@ export function getDeviceLogsTableForMonth(month: string): string {
  */
 export function getDeviceLogsTableForDate(date: string): string {
   const [year, month] = date.split('-');
-  return `dbo.DeviceLogs_${month}_${year}`;
+  // Remove leading zero from month for table naming
+  const monthNum = parseInt(month, 10);
+  return `dbo.DeviceLogs_${monthNum}_${year}`;
 }
 
 /**

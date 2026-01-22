@@ -1,0 +1,119 @@
+name: attendance-payroll-system
+region: nyc
+
+# Backend API Service
+services:
+  - name: api
+    github:
+      repo: EEC-AI-labs/Payroll_System
+      branch: main
+      deploy_on_push: true
+    
+    source_dir: /
+    build_command: npm install && npm run build
+    run_command: npm start
+    
+    environment_slug: node-js
+    instance_count: 1
+    instance_size_slug: basic-xxs  # Can upgrade to basic-xs, basic-s, etc.
+    
+    http_port: 3000
+    
+    health_check:
+      http_path: /api/ping
+      initial_interval_seconds: 10
+      period_seconds: 10
+      timeout_seconds: 3
+      success_threshold: 1
+      failure_threshold: 3
+    
+    envs:
+      - key: NODE_ENV
+        value: production
+        scope: RUN_TIME
+        type: SECRET
+      
+      - key: PORT
+        value: "3000"
+        scope: RUN_TIME
+        type: GENERAL
+      
+      # Database Configuration
+      - key: DB_HOST
+        value: your-db-host  # Update with your SQL Server host
+        scope: RUN_TIME
+        type: SECRET
+      
+      - key: DB_PORT
+        value: "1433"
+        scope: RUN_TIME
+        type: GENERAL
+      
+      - key: DB_NAME
+        value: your-database-name  # Update with your database name
+        scope: RUN_TIME
+        type: SECRET
+      
+      - key: DB_USER
+        value: your-db-user  # Update with your database user
+        scope: RUN_TIME
+        type: SECRET
+      
+      - key: DB_PASS
+        value: your-db-password  # Update with your database password
+        scope: RUN_TIME
+        type: SECRET
+      
+      # API Security
+      - key: API_KEY
+        value: your-api-key  # Update with your API key
+        scope: RUN_TIME
+        type: SECRET
+      
+      - key: JWT_SECRET
+        value: your-jwt-secret  # Update with your JWT secret
+        scope: RUN_TIME
+        type: SECRET
+      
+      # CORS Configuration (optional)
+      - key: CORS_ORIGINS
+        value: https://your-frontend-domain.onrender.com  # Update with your frontend URL
+        scope: RUN_TIME
+        type: GENERAL
+      
+      # Rate Limiting (optional)
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+        scope: RUN_TIME
+        type: GENERAL
+      
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "200"
+        scope: RUN_TIME
+        type: GENERAL
+
+# Frontend Static Site
+static_sites:
+  - name: admin-dashboard
+    github:
+      repo: EEC-AI-labs/Payroll_System
+      branch: main
+      deploy_on_push: true
+    
+    source_dir: admin-dashboard
+    build_command: npm install && npm run build
+    output_dir: dist
+    
+    routes:
+      - path: /
+    
+    envs:
+      - key: VITE_API_BASE_URL
+        value: https://api-your-app-name.ondigitalocean.app/api  # Update with your API URL
+        scope: BUILD_TIME
+        type: GENERAL
+      
+      - key: VITE_API_KEY
+        value: your-api-key  # Update with your API key
+        scope: BUILD_TIME
+        type: SECRET
