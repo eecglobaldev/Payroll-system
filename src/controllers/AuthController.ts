@@ -139,9 +139,9 @@ export class AuthController {
    */
   static async verifyOTP(req: Request, res: Response): Promise<void> {
     try {
-      const { employeeCode, otp } = req.body;
+      const { employeeCode: inputEmployeeCode, otp } = req.body;
 
-      if (!employeeCode || typeof employeeCode !== 'string') {
+      if (!inputEmployeeCode || typeof inputEmployeeCode !== 'string') {
         res.status(400).json({
           success: false,
           error: 'Employee code is required',
@@ -158,7 +158,7 @@ export class AuthController {
       }
 
       // Verify OTP
-      const verification = otpService.verifyOTP(employeeCode, otp);
+      const verification = otpService.verifyOTP(inputEmployeeCode, otp);
 
       if (!verification.valid) {
         res.status(400).json({
@@ -169,7 +169,7 @@ export class AuthController {
       }
 
       // OTP is valid - get employee details
-      const employee = await EmployeeModel.getByCode(employeeCode);
+      const employee = await EmployeeModel.getByCode(inputEmployeeCode);
       if (!employee) {
         res.status(404).json({
           success: false,
@@ -179,11 +179,11 @@ export class AuthController {
       }
 
       // Generate JWT token
-      // Ensure we have valid employeeCode and EmployeeId
-      const employeeCode = employee.EmployeeCode || employee.employeecode || employee.employeeCode;
-      const employeeId = employee.EmployeeId || employee.employeeid || employee.employeeId;
+      // Employee model now returns PascalCase properties via mapToEmployee
+      const tokenEmployeeCode = employee.EmployeeCode;
+      const tokenEmployeeId = employee.EmployeeId;
       
-      if (!employeeCode) {
+      if (!tokenEmployeeCode) {
         console.error('[AuthController] EmployeeCode is missing from employee object:', employee);
         res.status(500).json({
           success: false,
@@ -193,16 +193,16 @@ export class AuthController {
       }
       
       console.log('[AuthController] Generating token for employee:', {
-        EmployeeCode: employeeCode,
-        EmployeeId: employeeId,
-        EmployeeName: employee.EmployeeName || employee.employeename,
+        EmployeeCode: tokenEmployeeCode,
+        EmployeeId: tokenEmployeeId,
+        EmployeeName: employee.EmployeeName,
         RawEmployee: employee,
       });
       
       const tokenPayload = {
-        employeeCode: employeeCode,
+        employeeCode: tokenEmployeeCode,
         role: 'EMPLOYEE',
-        userId: employeeId,
+        userId: tokenEmployeeId,
       };
       
       console.log('[AuthController] Token payload:', tokenPayload);
@@ -216,7 +216,7 @@ export class AuthController {
         success: true,
         data: {
           token,
-          employeeCode: employeeCode,
+          employeeCode: tokenEmployeeCode,
           role: 'EMPLOYEE',
         },
         message: 'OTP verified successfully',
