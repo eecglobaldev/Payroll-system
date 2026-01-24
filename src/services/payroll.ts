@@ -29,16 +29,21 @@ export const config: PayrollConfig = {
 };
 
 /**
- * Parse timestamp as local time, handling SQL Server datetime quirks
- * SQL Server datetime is stored as local time (no timezone), but when retrieved
- * via mssql driver with 'Z' suffix, JavaScript interprets it as UTC and converts.
- * This function manually extracts components to preserve the original local time.
+ * Parse timestamp as local time, handling both SQL Server and PostgreSQL
+ * 
+ * SQL Server: datetime is stored as local time (no timezone), retrieved with 'Z' suffix
+ * PostgreSQL: timestamp without time zone is returned as Date where UTC components = stored value
+ * 
+ * This function extracts the original time components without timezone conversion.
  */
 function parseAsLocalTime(timestamp: Date | string): Date {
-  // If already a Date object, extract its UTC components and treat as local
+  // If already a Date object (from PostgreSQL pg library)
+  // For timestamp without time zone, pg returns Date where UTC components = stored value
+  // So we extract UTC components and create a new Date in local timezone
   if (timestamp instanceof Date) {
     const d = timestamp as Date;
-    // Get UTC components (which actually represent local time values)
+    // PostgreSQL: UTC components represent the stored value (no timezone conversion)
+    // Extract and create Date in local timezone to preserve the original time
     return new Date(
       d.getUTCFullYear(),
       d.getUTCMonth(),
@@ -52,7 +57,7 @@ function parseAsLocalTime(timestamp: Date | string): Date {
   
   const timestampStr = String(timestamp);
   
-  // If string has 'Z' suffix, parse components manually
+  // If string has 'Z' suffix (SQL Server format), parse components manually
   if (timestampStr.endsWith('Z')) {
     const match = timestampStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?Z?$/);
     
@@ -68,6 +73,21 @@ function parseAsLocalTime(timestamp: Date | string): Date {
         parseInt(ms || '0')
       );
     }
+  }
+  
+  // Try to parse as ISO string without timezone
+  const isoMatch = timestampStr.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?/);
+  if (isoMatch) {
+    const [, year, month, day, hour, minute, second, ms] = isoMatch;
+    return new Date(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      parseInt(hour),
+      parseInt(minute),
+      parseInt(second),
+      parseInt(ms || '0')
+    );
   }
   
   return new Date(timestamp);
@@ -87,15 +107,16 @@ export const defaultShift = {
  * Get attendance records for an employee in a given month
  */
 export async function getMonthlyAttendance(
-  userId: number,
+  userId: number | string,
   month: string
 ): Promise<AttendanceLog[]> {
   // getMonthRange uses the 26th-25th salary cycle
   const { start, end } = getMonthRange(month);
   
   // Use AttendanceModel which handles dynamic table names
+  // userid in devicelogs is VARCHAR (string), so convert userId to string
   const { AttendanceModel } = await import('../models/AttendanceModel.js');
-  const logs = await AttendanceModel.getByEmployeeAndDateRange(userId, start, end);
+  const logs = await AttendanceModel.getByEmployeeAndDateRange(String(userId), start, end);
   
   return logs;
 }
@@ -177,12 +198,53 @@ export function calculateDayHours(dayLogs: AttendanceLog[], shiftTiming?: ShiftT
 
   // Check if this is a split shift
   if (shift.isSplitShift && shift.slot1 && shift.slot2) {
-    console.log('[Payroll] Using SPLIT SHIFT calculation');
     return calculateSplitShiftHours(dayLogs, shift);
   } else {
-    console.log('[Payroll] Using NORMAL SHIFT calculation');
     return calculateNormalShiftHours(dayLogs, shift);
   }
+}
+
+/**
+ * Format timestamp directly from PostgreSQL Date object
+ * PostgreSQL timestamp without time zone returns Date where UTC components = stored value
+ * This function extracts UTC components directly to preserve database time
+ */
+/**
+ * Format timestamp from PostgreSQL TO_CHAR result or Date object
+ * PostgreSQL TO_CHAR returns string like '2026-01-01T10:10:25.000' (no timezone)
+ * This preserves the exact database time without any conversion
+ */
+function formatFromOriginalDate(originalDate: Date | string): string | null {
+  if (!originalDate) return null;
+  
+  // If it's already a string from TO_CHAR, use it directly (no conversion needed)
+  if (typeof originalDate === 'string') {
+    // PostgreSQL TO_CHAR format: 'YYYY-MM-DDTHH24:MI:SS.MS'
+    // Ensure it has milliseconds (pad if needed)
+    const match = originalDate.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?/);
+    if (match) {
+      const [, year, month, day, hour, minute, second, ms] = match;
+      const milliseconds = ms ? ms.padEnd(3, '0') : '000';
+      return `${year}-${month}-${day}T${hour}:${minute}:${second}.${milliseconds}`;
+    }
+    // If it doesn't match, return as-is (might be in different format)
+    return originalDate;
+  }
+  
+  // If it's a Date object (fallback for other queries), extract UTC components
+  if (originalDate instanceof Date) {
+    const d = originalDate;
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    const hours = String(d.getUTCHours()).padStart(2, '0');
+    const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+    const seconds = String(d.getUTCSeconds()).padStart(2, '0');
+    const milliseconds = String(d.getUTCMilliseconds()).padStart(3, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}`;
+  }
+  
+  return null;
 }
 
 /**
@@ -190,27 +252,78 @@ export function calculateDayHours(dayLogs: AttendanceLog[], shiftTiming?: ShiftT
  * Uses first IN and last OUT
  */
 function calculateNormalShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming): DayHours {
-  // Sort by time
-  const sorted = [...dayLogs].sort(
-    (a, b) => parseAsLocalTime(a.LogDate).getTime() - parseAsLocalTime(b.LogDate).getTime()
-  );
+  // Sort by time - LogDate is now a string from TO_CHAR, parse it for comparison
+  const sorted = [...dayLogs].sort((a, b) => {
+    const logDateA = a.LogDate as any; // Can be Date or string from TO_CHAR
+    const logDateB = b.LogDate as any; // Can be Date or string from TO_CHAR
+    const timeA = typeof logDateA === 'string' 
+      ? new Date(logDateA.replace(' ', 'T')).getTime()
+      : parseAsLocalTime(logDateA).getTime();
+    const timeB = typeof logDateB === 'string'
+      ? new Date(logDateB.replace(' ', 'T')).getTime()
+      : parseAsLocalTime(logDateB).getTime();
+    return timeA - timeB;
+  });
 
-  // Parse timestamps as local time (handles SQL Server datetime quirks)
-  let firstEntry: Date | null = parseAsLocalTime(sorted[0].LogDate);
-  let lastExit: Date | null = parseAsLocalTime(sorted[sorted.length - 1].LogDate);
+  // LogDate is now a string from PostgreSQL TO_CHAR (format: 'YYYY-MM-DDTHH24:MI:SS.MS')
+  const firstLogOriginal = sorted[0].LogDate as any; // Can be Date or string
+  const lastLogOriginal = sorted[sorted.length - 1].LogDate as any; // Can be Date or string
+  
+  // Parse for calculations (needs Date object for time comparisons)
+  // If it's a string, parse it directly without timezone conversion
+  let firstEntry: Date | null = null;
+  let lastExit: Date | null = null;
+  
+  if (typeof firstLogOriginal === 'string') {
+    // Parse string directly: '2026-01-01T10:10:25.000'
+    const match = firstLogOriginal.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?/);
+    if (match) {
+      const [, year, month, day, hour, minute, second, ms] = match;
+      firstEntry = new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        parseInt(hour),
+        parseInt(minute),
+        parseInt(second),
+        parseInt(ms || '0')
+      );
+    }
+  } else {
+    firstEntry = parseAsLocalTime(firstLogOriginal);
+  }
+  
+  if (typeof lastLogOriginal === 'string') {
+    const match = lastLogOriginal.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?/);
+    if (match) {
+      const [, year, month, day, hour, minute, second, ms] = match;
+      lastExit = new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        parseInt(hour),
+        parseInt(minute),
+        parseInt(second),
+        parseInt(ms || '0')
+      );
+    }
+  } else {
+    lastExit = parseAsLocalTime(lastLogOriginal);
+  }
+  
 
   // If there's only one log, determine if it's an entry or an exit
-  if (dayLogs.length === 1) {
-    const logTime = firstEntry;
-    const hour = logTime.getHours();
+  if (dayLogs.length === 1 && firstEntry) {
+    // Use local hour (Date was created from string without timezone)
+    const hour = firstEntry.getHours();
     
     // If log is after 2:00 PM (14:00), treat as checkout only
     if (hour >= 14) {
+      lastExit = firstEntry;
       firstEntry = null;
-      lastExit = logTime;
     } else {
       // If log is before 2:00 PM, treat as check-in only
-      firstEntry = logTime;
+      // firstEntry already set, just clear lastExit
       lastExit = null;
     }
   }
@@ -237,6 +350,7 @@ function calculateNormalShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming)
   let isLateBy30Minutes = false;
   let minutesLate: number | null = null;
   if (firstEntry) {
+    // Use local time components (Date was created from string without timezone)
     const entryHours = firstEntry.getHours();
     const entryMinutes = firstEntry.getMinutes();
     const entrySeconds = firstEntry.getSeconds();
@@ -271,6 +385,7 @@ function calculateNormalShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming)
   // Only early exit if there IS an exit
   let isEarlyExit = false;
   if (lastExit) {
+    // Use local time components (Date was created from string without timezone)
     const exitTime = lastExit.getHours() * 60 + lastExit.getMinutes();
     // Calculate expected end time in minutes
     const expectedEnd = shift.endHour * 60 + shift.endMinute;
@@ -298,9 +413,14 @@ function calculateNormalShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming)
     status = 'half-day';
   }
 
+  // Format times directly from original Date objects (PostgreSQL UTC components = stored value)
+  const formattedFirstEntry = formatFromOriginalDate(firstLogOriginal);
+  const formattedLastExit = formatFromOriginalDate(lastLogOriginal);
+  
+
   return {
-    firstEntry: firstEntry ? firstEntry.toISOString() : null,
-    lastExit: lastExit ? lastExit.toISOString() : null,
+    firstEntry: formattedFirstEntry,
+    lastExit: formattedLastExit,
     totalHours: parseFloat(totalHours.toFixed(2)),
     isLate,
     isLateBy30Minutes,
@@ -332,12 +452,39 @@ function calculateSplitShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming):
     };
   }
 
-  // Sort logs by time
-  const sorted = [...dayLogs].sort(
-    (a, b) => parseAsLocalTime(a.LogDate).getTime() - parseAsLocalTime(b.LogDate).getTime()
-  );
+  // Sort logs by time - LogDate is now a string from TO_CHAR
+  const sorted = [...dayLogs].sort((a, b) => {
+    const logDateA = a.LogDate as any; // Can be Date or string
+    const logDateB = b.LogDate as any; // Can be Date or string
+    const timeA = typeof logDateA === 'string' 
+      ? new Date(logDateA.replace(' ', 'T')).getTime()
+      : parseAsLocalTime(logDateA).getTime();
+    const timeB = typeof logDateB === 'string'
+      ? new Date(logDateB.replace(' ', 'T')).getTime()
+      : parseAsLocalTime(logDateB).getTime();
+    return timeA - timeB;
+  });
 
-  const parsedLogs = sorted.map(log => parseAsLocalTime(log.LogDate));
+  // Parse logs - if string, parse directly; otherwise use parseAsLocalTime
+  const parsedLogs = sorted.map(log => {
+    const logDate = log.LogDate as any; // Can be Date or string
+    if (typeof logDate === 'string') {
+      const match = logDate.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?/);
+      if (match) {
+        const [, year, month, day, hour, minute, second, ms] = match;
+        return new Date(
+          parseInt(year),
+          parseInt(month) - 1,
+          parseInt(day),
+          parseInt(hour),
+          parseInt(minute),
+          parseInt(second),
+          parseInt(ms || '0')
+        );
+      }
+    }
+    return parseAsLocalTime(logDate);
+  });
 
   // Helper function to convert hours/minutes to minutes since midnight
   const toMinutes = (hours: number, minutes: number): number => hours * 60 + minutes;
@@ -352,16 +499,6 @@ function calculateSplitShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming):
   // This is the time boundary that separates Slot 1 from Slot 2
   const midpointBetweenSlots = (slot1End + slot2Start) / 2;
   
-  console.log('[Payroll] Split shift calculation:');
-  console.log('[Payroll] Slot 1:', `${shift.slot1.startHour}:${shift.slot1.startMinute} - ${shift.slot1.endHour}:${shift.slot1.endMinute}`, `(${slot1Start}-${slot1End} minutes)`);
-  console.log('[Payroll] Slot 2:', `${shift.slot2.startHour}:${shift.slot2.startMinute} - ${shift.slot2.endHour}:${shift.slot2.endMinute}`, `(${slot2Start}-${slot2End} minutes)`);
-  console.log('[Payroll] Midpoint between slots:', `${midpointBetweenSlots} minutes (${Math.floor(midpointBetweenSlots/60)}:${String(midpointBetweenSlots%60).padStart(2,'0')})`);
-  console.log('[Payroll] Total logs:', parsedLogs.length);
-  parsedLogs.forEach((log, i) => {
-    const mins = toMinutes(log.getHours(), log.getMinutes());
-    const slotAssignment = mins < midpointBetweenSlots ? 'Slot 1' : 'Slot 2';
-    console.log(`[Payroll]   Log ${i+1}:`, log.toLocaleTimeString(), `(${mins} minutes) → ${slotAssignment}`);
-  });
 
   // Process Slot 1
   // Strategy: Find logs that likely belong to Slot 1 based on timing
@@ -401,7 +538,6 @@ function calculateSplitShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming):
     }
   }
 
-  console.log('[Payroll] Slot 1 result:', slot1FirstIn?.toLocaleTimeString(), 'to', slot1LastOut?.toLocaleTimeString(), '=', slot1Hours.toFixed(2), 'hours');
 
   // Process Slot 2
   // Slot 2: Any log at or after the midpoint
@@ -440,7 +576,6 @@ function calculateSplitShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming):
     }
   }
 
-  console.log('[Payroll] Slot 2 result:', slot2FirstIn?.toLocaleTimeString(), 'to', slot2LastOut?.toLocaleTimeString(), '=', slot2Hours.toFixed(2), 'hours');
 
   // Calculate total hours (sum of both slots)
   let totalHours = slot1Hours + slot2Hours;
@@ -455,7 +590,6 @@ function calculateSplitShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming):
     totalHours = 24;
   }
 
-  console.log('[Payroll] Total hours:', totalHours.toFixed(2), 'hours');
 
   // Late if EITHER slot is late
   const isLate = slot1IsLate || slot2IsLate;
@@ -512,9 +646,24 @@ function calculateSplitShiftHours(dayLogs: AttendanceLog[], shift: ShiftTiming):
   const firstEntry = slot1FirstIn || slot2FirstIn;
   const lastExit = slot2LastOut || slot1LastOut;
 
+  // Format from Date object (created from string, so use local components)
+  const formatFromDate = (date: Date | null): string | null => {
+    if (!date) return null;
+    const d = date;
+    // Use local time components since Date was created from string without timezone
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+    const milliseconds = String(d.getMilliseconds()).padStart(3, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}`;
+  };
+
   return {
-    firstEntry: firstEntry ? firstEntry.toISOString() : null,
-    lastExit: lastExit ? lastExit.toISOString() : null,
+    firstEntry: formatFromDate(firstEntry),
+    lastExit: formatFromDate(lastExit),
     totalHours: parseFloat(totalHours.toFixed(2)),
     isLate,
     isLateBy30Minutes,
@@ -620,7 +769,7 @@ async function resolveShiftForDate(
  * Calculate monthly working hours and attendance summary
  */
 export async function calculateMonthlyHours(
-  userId: number,
+  userId: number | string,
   month: string,
   joinDateStr?: string,
   exitDateStr?: string,
@@ -635,15 +784,16 @@ export async function calculateMonthlyHours(
     const { EmployeeDetailsModel } = await import('../models/EmployeeDetailsModel.js');
     
     const { start, end } = getMonthRange(month);
+    // userid in devicelogs is VARCHAR (string), convert to string
+    const userIdStr = String(userId);
     shiftAssignments = await EmployeeShiftAssignmentModel.getAssignmentsForEmployee(
-      userId.toString(),
+      userIdStr,
       start,
       end
     );
-    employeeDetails = await EmployeeDetailsModel.getByCode(userId.toString());
+    employeeDetails = await EmployeeDetailsModel.getByCode(userIdStr);
     
     if (shiftAssignments.length > 0) {
-      console.log(`[Payroll] Found ${shiftAssignments.length} shift assignment(s) for employee ${userId} in ${month}`);
     }
   } catch (error: any) {
     console.warn(`[Payroll] Could not pre-fetch shift assignments for employee ${userId}: ${error.message}`);
@@ -651,6 +801,7 @@ export async function calculateMonthlyHours(
 
   const logs = await getMonthlyAttendance(userId, month);
   const groupedLogs = groupByDate(logs);
+  console.log(`[Payroll] Attendance: ${logs.length} logs found for employee ${userId} in ${month}`);
 
   const dailyBreakdown: DailyBreakdown[] = [];
   let totalWorkedHours = 0;
@@ -685,7 +836,6 @@ export async function calculateMonthlyHours(
   
   // Calculate effective days in cycle (for employees who joined/left mid-cycle)
   const effectiveDaysInCycle = Math.max(0, Math.round(effectiveDiffMs / (1000 * 60 * 60 * 24)) + 1);
-  console.log(`[Payroll] Employee ${userId} effective days in cycle: ${effectiveDaysInCycle} (from ${effectiveStart} to ${effectiveEnd}) out of full cycle: ${totalDaysInCycle}`);
 
   // First pass: Calculate for each day in the FULL cycle, but only count logs in effective range
   const currentDate = new Date(fullCycleStart);
@@ -750,9 +900,6 @@ export async function calculateMonthlyHours(
         // So no additional 30+ minute deduction should apply
         if (dayStats.isLateBy30Minutes && dayStats.status === 'full-day') {
           lateBy30MinutesDays++;
-          console.log(`[Payroll] Day ${dateStr}: Late by 30+ min but completed full hours - will apply 50% deduction`);
-        } else if (dayStats.isLateBy30Minutes && dayStats.status !== 'full-day') {
-          console.log(`[Payroll] Day ${dateStr}: Late by 30+ min but worked only ${dayStats.totalHours.toFixed(2)} hours (status: ${dayStats.status}) - NO 30+ min deduction (already penalized)`);
         }
         
         if (dayStats.isEarlyExit) earlyExits++;
@@ -767,7 +914,6 @@ export async function calculateMonthlyHours(
   // This must happen before Sunday marking so that Sunday pay can be recalculated
   // based on the updated absent count after regularizations
   // Regularizations convert absent/half-day to full-day (present)
-  console.log(`[Payroll] Before regularizations: absentDays=${absentDays}, fullDays=${fullDays}, halfDays=${halfDays}`);
   
   try {
     const { AttendanceRegularizationModel } = await import('../models/AttendanceRegularizationModel.js');
@@ -778,7 +924,6 @@ export async function calculateMonthlyHours(
     );
 
     if (regularizations.length > 0) {
-      console.log(`[Payroll] Applying ${regularizations.length} attendance regularizations for employee ${userId}`);
       
       for (const reg of regularizations) {
         const regDateStr = formatDate(new Date(reg.RegularizationDate));
@@ -816,18 +961,14 @@ export async function calculateMonthlyHours(
           // Regularized days should NOT count as late (they were absent/half-day, converted to present)
           if (dayEntry.isLate && (originalStatus === 'absent' || originalStatus === 'half-day')) {
             lateDays--;
-            console.log(`[Payroll] Regularized ${regDateStr}: Removing from late count (was ${originalStatus}, now ${regularizedStatus})`);
           }
           
-          console.log(`[Payroll] ✅ Regularized ${regDateStr}: ${originalStatus} → ${regularizedStatus} (absentDays now: ${absentDays})`);
         } else {
           console.warn(`[Payroll] ⚠️ Regularization date ${regDateStr} not found in daily breakdown`);
         }
       }
       
       console.log(`[Payroll] After regularizations: absentDays=${absentDays}, fullDays=${fullDays}, halfDays=${halfDays}`);
-    } else {
-      console.log(`[Payroll] No regularizations found for employee ${userId} in range ${effectiveStart} to ${effectiveEnd}`);
     }
   } catch (error: any) {
     console.warn('[Payroll] Could not fetch regularizations (table may not exist yet):', error.message);
@@ -895,7 +1036,6 @@ export async function calculateMonthlyHours(
       }
     }
     
-    console.log(`[Payroll] Counting LOP days for Sunday rule (${isNewJoiner ? 'new joiner' : 'contract cessation'}): Only counting days ${isNewJoiner ? `after ${joinDateStr}` : `before ${exitDateStr}`}`);
   } else {
     // For regular employees: Count all leaves in the cycle
     originalAbsentDaysForSundayRule = absentDays;
@@ -904,7 +1044,6 @@ export async function calculateMonthlyHours(
   
   const originalTotalLopDaysForSundayRule = originalAbsentDaysForSundayRule + (originalHalfDaysForSundayRule * 0.5);
   
-  console.log(`[Payroll] Original LOP days for Sunday rule (after regularization, before PL/CL): ${originalTotalLopDaysForSundayRule.toFixed(1)} (${originalAbsentDaysForSundayRule} absents + ${originalHalfDaysForSundayRule} half-days)`);
 
   // Second-and-a-half pass: Apply paid leave adjustments
   // Paid leave days should NOT count as "absent" for Sunday payment calculation
@@ -912,7 +1051,6 @@ export async function calculateMonthlyHours(
   // NOTE: This reduces absentDays count, but Sunday payment rule uses original count
   // Now supports explicit values (0.5 or 1.0) for each leave date
   if (paidLeaveDates && paidLeaveDates.length > 0) {
-    console.log(`[Payroll] Applying ${paidLeaveDates.length} paid leave dates for employee ${userId}`);
     
     for (const leaveItem of paidLeaveDates) {
       // Validate leave item structure
@@ -968,7 +1106,6 @@ export async function calculateMonthlyHours(
         dayEntry.status = 'paid-leave';
         (dayEntry as any).originalStatus = originalStatus;
         
-        console.log(`[Payroll] ✅ Paid leave ${leaveDate} (value: ${leaveValue}): ${originalStatus} → paid-leave (absentDays now: ${absentDays})`);
       }
     }
   }
@@ -979,7 +1116,6 @@ export async function calculateMonthlyHours(
   // - If value is 1.0: full day credit
   // - If value is 0.5: half day credit
   if (casualLeaveDates && casualLeaveDates.length > 0) {
-    console.log(`[Payroll] Applying ${casualLeaveDates.length} casual leave dates for employee ${userId}`);
     
     for (const leaveItem of casualLeaveDates) {
       // Validate leave item structure
@@ -1031,12 +1167,10 @@ export async function calculateMonthlyHours(
         // Mark status as casual-leave for sandwich rule and UI display
         dayEntry.status = 'casual-leave';
         
-        console.log(`[Payroll] ✅ Casual leave ${leaveDate} (value: ${leaveValue}): ${originalStatus} → casual-leave (absentDays: ${absentDays}, halfDays: ${halfDays}, fullDays: ${fullDays})`);
       }
     }
   }
   
-  console.log(`[Payroll] After all adjustments (regularizations + leaves): absentDays=${absentDays}, fullDays=${fullDays}, halfDays=${halfDays}`);
 
   // Third pass: Mark Sundays as "weekoff" with paid/unpaid based on ORIGINAL leave days
   // This happens AFTER regularizations and PL/CL adjustments
@@ -1056,11 +1190,6 @@ export async function calculateMonthlyHours(
   // Note: isNewJoiner and isContractCessation are already declared above when calculating filtered leaves
   // We still need to track this for the "worked in week" logic, but 5+ days rule applies if filtered leaves are 5+
   
-  console.log(`[Payroll] Sunday payment calculation for employee ${userId}:`);
-  console.log(`[Payroll]   - Original LOP days (after regularization, before PL/CL${isNewJoiner ? `, after ${joinDateStr}` : isContractCessation ? `, before ${exitDateStr}` : ''}): ${originalTotalLopDaysForSundayRule.toFixed(1)} (${originalAbsentDaysForSundayRule} absents + ${originalHalfDaysForSundayRule} half-days)`);
-  console.log(`[Payroll]   - Current LOP days (after all adjustments): ${(absentDays + (halfDays * 0.5)).toFixed(1)} (${absentDays} absents + ${halfDays} half-days)`);
-  console.log(`[Payroll]   - Is New Joiner: ${isNewJoiner}, Is Contract Cessation: ${isContractCessation}`);
-  console.log(`[Payroll]   - 5+ filtered LOP days: ${hasFiveOrMoreLeaveDays} (${originalTotalLopDaysForSundayRule.toFixed(1)} days)`);
   
   // Create a map of date -> status for quick lookup (with updated statuses after regularizations)
   const attendanceMap = new Map<string, string>();
@@ -1068,7 +1197,6 @@ export async function calculateMonthlyHours(
     attendanceMap.set(day.date, day.status);
   });
   
-  console.log(`[Payroll] AttendanceMap created with ${attendanceMap.size} entries`);
   
   currentDate.setTime(fullCycleStart.getTime());
   
@@ -1086,8 +1214,6 @@ export async function calculateMonthlyHours(
       // PL/CL approvals do NOT change this rule - if originally had 5+ filtered days leave, all Sundays remain unpaid
       if (hasFiveOrMoreLeaveDays) {
         dayEntry.weekoffType = 'unpaid';
-        const filterInfo = isNewJoiner ? `after ${joinDateStr}` : isContractCessation ? `before ${exitDateStr}` : '';
-        console.log(`[Payroll] Sunday ${dateStr} marked as unpaid (5+ filtered LOP days ${filterInfo}: ${originalTotalLopDaysForSundayRule.toFixed(1)} days [${originalAbsentDaysForSundayRule} absents + ${originalHalfDaysForSundayRule} half-days] - PL/CL approvals do NOT change this rule)`);
       }
       // For new joiners and contract cessation (without 5+ filtered leaves): Pay Sundays of weeks where they worked
       else if (isNewJoiner || isContractCessation) {
@@ -1160,7 +1286,6 @@ export async function calculateMonthlyHours(
         
         // SANDWICH RULE DISABLED: All Sundays are PAID if 5+ days rule doesn't apply
         dayEntry.weekoffType = 'paid';
-        console.log(`[Payroll] ✅ Sunday ${dateStr} marked as PAID (sandwich rule disabled)`);
       }
       
       // Reset other fields for weekoff days
@@ -1176,6 +1301,8 @@ export async function calculateMonthlyHours(
     currentDate.setDate(currentDate.getDate() + 1);
   }
 
+  console.log(`[Payroll] Attendance calculated: ${fullDays} full + ${halfDays} half days, ${absentDays} absent, ${lateDays} late (${lateBy30MinutesDays} by 30+ min), ${totalWorkedHours.toFixed(2)}h worked`);
+  
   return {
     employeeCode: userId.toString(),
     month,
@@ -1246,7 +1373,7 @@ export function calculateOvertime(totalWorkedHours: number, expectedHours: numbe
  * Get employee base salary from EmployeeDetails table (DATABASE)
  * REPLACES: Excel-based salary lookup
  */
-export async function getBaseSalary(userId: number): Promise<BaseSalaryInfo> {
+export async function getBaseSalary(userId: number | string): Promise<BaseSalaryInfo> {
   try {
     // Import EmployeeDetailsModel
     const { EmployeeDetailsModel } = await import('../models/EmployeeDetailsModel.js');
@@ -1265,7 +1392,6 @@ export async function getBaseSalary(userId: number): Promise<BaseSalaryInfo> {
       throw new Error(`Employee ${userId} has no valid salary in database (BasicSalary is 0 or empty)`);
     }
     
-    console.log(`[Payroll] ✅ Loaded salary for employee ${userId} from DATABASE: ₹${baseSalary.toLocaleString('en-IN')}`);
     
     return {
       baseSalary: baseSalary,
@@ -1292,8 +1418,6 @@ function countPayableSundaysRange(start: string, end: string, dailyBreakdown: Da
     end: parseISO(end)
   });
 
-  console.log(`[Payroll] Counting payable Sundays from ${start} to ${end}`);
-  console.log(`[Payroll] Daily breakdown has ${dailyBreakdown.length} entries`);
 
   for (const currentDate of allDates) {
     const dayOfWeek = getDay(currentDate); // 0 = Sunday
@@ -1330,7 +1454,6 @@ function countPayableSundaysRange(start: string, end: string, dailyBreakdown: Da
     }
   }
   
-  console.log(`[Payroll] Total payable Sundays counted: ${payableSundayCount}`);
   return payableSundayCount;
 }
 
@@ -1350,7 +1473,7 @@ function countPayableSundaysRange(start: string, end: string, dailyBreakdown: Da
  * - Loss of Pay (LOP) applied if leaves exceed annual entitlement
  */
 export async function calculateSalary(
-  employeeNo: number,
+  employeeNo: number | string,
   month: string,
   joinDateStr?: string,
   exitDateStr?: string,
@@ -1390,15 +1513,12 @@ export async function calculateSalary(
       if (employeeDetails?.JoiningDate) {
         // JoiningDate is already formatted as YYYY-MM-DD string from EmployeeDetailsModel
         joinDateStr = employeeDetails.JoiningDate;
-        console.log(`[Payroll] Fetched join date from EmployeeDetails for employee ${employeeNo}: ${joinDateStr}`);
-      } else {
-        console.log(`[Payroll] No join date found in EmployeeDetails for employee ${employeeNo}`);
+        console.log(`[Payroll] Join date: ${joinDateStr}`);
       }
     } catch (err) {
       console.warn(`[Payroll] Could not fetch join date from EmployeeDetails: ${(err as Error).message}`);
     }
   } else {
-    console.log(`[Payroll] Using provided join date for employee ${employeeNo}: ${joinDateStr}`);
   }
 
   // Use normalized leave dates
@@ -1417,18 +1537,17 @@ export async function calculateSalary(
       const monthlyLeaveUsage = await LeaveModel.getMonthlyLeaveUsage(employeeNo.toString(), month);
       
       if (monthlyLeaveUsage) {
-        console.log(`[Payroll] Loading persisted leave approvals from database for ${employee.EmployeeName} (${month})`);
-        
         // Parse leave dates with values (supports both JSON and legacy format)
         const { parseLeaveDatesWithValues } = await import('./leaveService.js');
         paidLeaveDates = paidLeaveDates === undefined ? parseLeaveDatesWithValues(monthlyLeaveUsage.PaidLeaveDates, 1.0) : paidLeaveDates;
         casualLeaveDates = casualLeaveDates === undefined ? parseLeaveDatesWithValues(monthlyLeaveUsage.CasualLeaveDates, 0.5) : casualLeaveDates;
         
-        const paidLeaveCredit = paidLeaveDates.reduce((sum, item) => sum + item.value, 0);
-        const casualLeaveCredit = casualLeaveDates.reduce((sum, item) => sum + item.value, 0);
-        console.log(`[Payroll] Loaded ${paidLeaveDates.length} paid leave dates (${paidLeaveCredit} days) and ${casualLeaveDates.length} casual leave dates (${casualLeaveCredit} days) from database`);
+        const paidCount = paidLeaveDates?.length || 0;
+        const casualCount = casualLeaveDates?.length || 0;
+        if (paidCount > 0 || casualCount > 0) {
+          console.log(`[Payroll] Leave dates loaded: ${paidCount} paid, ${casualCount} casual`);
+        }
       } else {
-        console.log(`[Payroll] No persisted leave approvals found for ${employee.EmployeeName} (${month}) - using empty arrays`);
         paidLeaveDates = paidLeaveDates === undefined ? [] : paidLeaveDates;
         casualLeaveDates = casualLeaveDates === undefined ? [] : casualLeaveDates;
       }
@@ -1442,17 +1561,16 @@ export async function calculateSalary(
     // IMPORTANT: Use provided values as-is - frontend is the source of truth
     // The frontend loads data from DB first, then user makes changes, so provided values are always current
     // Don't merge with DB - this prevents stale data issues
-    const paidLeaveCredit = paidLeaveDates.reduce((sum, item) => sum + item.value, 0);
-    const casualLeaveCredit = casualLeaveDates.reduce((sum, item) => sum + item.value, 0);
-    console.log(`[Payroll] Using leave dates from API parameters (frontend is source of truth): ${paidLeaveDates.length} paid dates (${paidLeaveCredit} days), ${casualLeaveDates.length} casual dates (${casualLeaveCredit} days)`);
   }
 
   // Get attendance data from database
   // IMPORTANT: Pass leave dates so they can be factored into Sunday payment and absent count calculations
+  console.log(`[Payroll] Calculating salary for ${employee.EmployeeName} (${employeeNo}) - ${month}`);
   const attendance = await calculateMonthlyHours(employeeNo, month, joinDateStr, exitDateStr, paidLeaveDates, casualLeaveDates);
 
   // Get base salary from Excel file (ONLY salary data, not employee identity)
   const { baseSalary, hourlyRate } = await getBaseSalary(employeeNo);
+  console.log(`[Payroll] Base salary: ₹${baseSalary.toLocaleString('en-IN')}, Hourly rate: ₹${hourlyRate?.toFixed(2) || 'N/A'}`);
 
   // Get the default salary cycle date range (26th to 25th)
   const { start, end } = getMonthRange(month);
@@ -1477,16 +1595,15 @@ export async function calculateSalary(
       const shift = await ShiftModel.getByName(employeeDetails.Shift);
       if (shift) {
         workHoursPerDay = shift.WorkHours;
-        console.log(`[Payroll] Using ${workHoursPerDay} work hours per day from shift "${employeeDetails.Shift}"`);
       }
     } else {
       // Try default shift
       const defaultShift = await ShiftModel.getDefaultShift();
       if (defaultShift) {
         workHoursPerDay = defaultShift.WorkHours;
-        console.log(`[Payroll] Using ${workHoursPerDay} work hours per day from default shift "${defaultShift.ShiftName}"`);
       }
     }
+    console.log(`[Payroll] Work hours: ${workHoursPerDay}h/day`);
   } catch (error: any) {
     console.warn(`[Payroll] Could not fetch employee details/shift for work hours, using default ${workHoursPerDay} hours: ${error.message}`);
   }
@@ -1540,16 +1657,7 @@ export async function calculateSalary(
       return isEligible ? sum + value : sum;
     }, 0);
     
-    const eligibleCount = paidLeaveDates.filter(item => {
-      const dayEntry = attendance.dailyBreakdown.find(d => d.date === item.date);
-      return dayEntry && 
-             dayEntry.status !== 'not-active' &&
-             (dayEntry.status === 'paid-leave' || 
-              dayEntry.status === 'absent' || 
-              dayEntry.status === 'half-day');
-    }).length;
     
-    console.log(`[Payroll] ✅ Approved paid leave days: ${paidLeaveDays} (${eligibleCount} dates) out of ${paidLeaveDates.length} requested`);
   }
   
   if (casualLeaveDates && casualLeaveDates.length > 0) {
@@ -1578,16 +1686,7 @@ export async function calculateSalary(
       return isEligible ? sum + value : sum;
     }, 0);
     
-    const eligibleCount = casualLeaveDates.filter(item => {
-      const dayEntry = attendance.dailyBreakdown.find(d => d.date === item.date);
-      return dayEntry && 
-             dayEntry.status !== 'not-active' &&
-             (dayEntry.status === 'casual-leave' || 
-              dayEntry.status === 'absent' || 
-              dayEntry.status === 'half-day');
-    }).length;
     
-    console.log(`[Payroll] ✅ Approved casual leave days: ${casualLeaveDays} (${eligibleCount} dates) out of ${casualLeaveDates.length} requested`);
   }
 
   // Check leave entitlement and calculate Loss of Pay (LOP)
@@ -1615,7 +1714,6 @@ export async function calculateSalary(
       };
       
       if (isExceeded) {
-        console.log(`[Payroll] Employee ${employee.EmployeeName} has exceeded leave limit. LOP: ${lossOfPayDays} days`);
       }
     } else {
       console.log(`[Payroll] No leave entitlement configured for employee ${employee.EmployeeName} in year ${year}`);
@@ -1637,36 +1735,27 @@ export async function calculateSalary(
   const totalPayableDays = actualDaysWorked + payableSundays + approvedLeaveDays;
   const payableBasedOnAttendance = (perDayRate * totalPayableDays) - lopDeduction;
   
-  console.log(`[Payroll] Salary calculation for ${employee.EmployeeName}:`);
-  console.log(`[Payroll]   - Actual days worked: ${actualDaysWorked} (${attendance.fullDays} full + ${attendance.halfDays} half)`);
-  console.log(`[Payroll]   - Payable Sundays: ${payableSundays}`);
-  console.log(`[Payroll]   - Approved leave days: ${approvedLeaveDays} (${paidLeaveDays} paid + ${casualLeaveDays} casual)`);
-  console.log(`[Payroll]   - Total payable days: ${totalPayableDays}`);
-  console.log(`[Payroll]   - Per day rate: ₹${perDayRate.toFixed(2)}`);
-  console.log(`[Payroll]   - Payable based on attendance: ₹${payableBasedOnAttendance.toFixed(2)}`);
+  console.log(`[Payroll] Attendance summary: ${attendance.fullDays} full + ${attendance.halfDays} half days, ${attendance.absentDays} absent, ${attendance.lateDays} late, ${payableSundays} payable Sundays`);
+  console.log(`[Payroll] Leave credits: ${paidLeaveDays} paid + ${casualLeaveDays} casual = ${approvedLeaveDays} days`);
+  console.log(`[Payroll] Payable: ${totalPayableDays} days × ₹${perDayRate.toFixed(2)} = ₹${payableBasedOnAttendance.toFixed(2)}${lossOfPayDays > 0 ? ` - LOP ₹${lopDeduction.toFixed(2)}` : ''}`);
+  
 
   // Calculate deductions for late entries
   // Separate 30+ min late days and 10+ min late days (but not 30+ min)
+  // These variables are kept for code clarity and potential future use in late deduction calculations
   const lateBy30MinutesDays = attendance.lateBy30MinutesDays || 0;
   const totalLateDays = attendance.lateDays || 0;
-  const lateBy10MinutesDays = Math.max(0, totalLateDays - lateBy30MinutesDays); // 10+ min but not 30+ min
   
   // 30+ minute late deduction: 50% per day (only if completed full hours)
-  const lateDeduction30Minutes = lateBy30MinutesDays * (perDayRate * 0.5);
-  
   // 10+ minute late deduction: 25% per day for days exceeding grace period (3 days)
   // Grace period applies only to 10+ min late days (not 30+ min late days)
-  const lateDays10MinExceedingGrace = Math.max(0, lateBy10MinutesDays - 3);
-  const lateDeduction10Minutes = lateDays10MinExceedingGrace * (perDayRate * 0.25);
+  // Note: Late deductions are applied directly in salary calculation, not stored separately
+  // TODO: If late deduction calculations are uncommented, use these variables:
+  // const lateDeduction30Minutes = lateBy30MinutesDays * (perDayRate * 0.5);
+  // const lateBy10MinutesDays = Math.max(0, totalLateDays - lateBy30MinutesDays);
+  // const lateDays10MinExceedingGrace = Math.max(0, lateBy10MinutesDays - 3);
+  // const lateDeduction10Minutes = lateDays10MinExceedingGrace * (perDayRate * 0.25);
   
-  // Total late deduction = 30+ minute deduction + 10+ minute deduction
-  const lateDeduction = lateDeduction30Minutes + lateDeduction10Minutes;
-  
-  console.log(`[Payroll] Late deduction calculation:`);
-  console.log(`[Payroll]   - Days late by 30+ minutes: ${lateBy30MinutesDays} (50% deduction: ₹${lateDeduction30Minutes.toFixed(2)})`);
-  console.log(`[Payroll]   - Days late by 10+ minutes (not 30+): ${lateBy10MinutesDays}`);
-  console.log(`[Payroll]   - 10+ min late days exceeding grace (3): ${lateDays10MinExceedingGrace} (25% deduction: ₹${lateDeduction10Minutes.toFixed(2)})`);
-  console.log(`[Payroll]   - Total late deduction: ₹${lateDeduction.toFixed(2)}`);
 
   // Calculate overtime (per day, not monthly)
   // First check if overtime is enabled for this employee for this month
@@ -1685,10 +1774,7 @@ export async function calculateSalary(
       // Round down to nearest whole hour (floor)
       overtimeHours = Math.floor(rawOvertimeHours);
       overtimeAmount = overtimeHours * calculatedHourlyRate;
-      
-      console.log(`[Payroll] Overtime enabled for employee ${employeeNo}: ${rawOvertimeHours.toFixed(2)} hours (raw) → ${overtimeHours} hours (rounded down) × ₹${calculatedHourlyRate.toFixed(2)} = ₹${overtimeAmount.toFixed(2)}`);
-    } else {
-      console.log(`[Payroll] Overtime disabled for employee ${employeeNo} in ${month}`);
+      console.log(`[Payroll] Overtime: ${overtimeHours}h × ₹${calculatedHourlyRate.toFixed(2)} = ₹${overtimeAmount.toFixed(2)}`);
     }
   } catch (err) {
     console.warn(`[Payroll] Could not check overtime status (table may not exist): ${(err as Error).message}`);
@@ -1701,6 +1787,7 @@ export async function calculateSalary(
   // Calculate initial gross salary (includes overtime, but NOT incentive yet)
   // We'll add incentive later after fetching adjustments
   const grossSalaryBase = parseFloat((payableBasedOnAttendance + overtimeAmount).toFixed(2));
+  console.log(`[Payroll] Gross salary (base): ₹${grossSalaryBase.toFixed(2)} (attendance: ₹${payableBasedOnAttendance.toFixed(2)} + overtime: ₹${overtimeAmount.toFixed(2)})`);
 
   // Calculate TDS threshold
   const tdsThreshold = 15000;
@@ -1712,11 +1799,7 @@ export async function calculateSalary(
   let professionalTax = 0;
   if (grossSalaryBase > professionalTaxGrossThreshold && baseSalary >= professionalTaxThreshold) {
     professionalTax = 200;
-    console.log(`[Payroll] Professional tax applied: ₹${professionalTax} for employee with gross salary ${grossSalaryBase} > ${professionalTaxGrossThreshold} AND base salary ${baseSalary} >= ${professionalTaxThreshold}`);
-  } else if (grossSalaryBase <= professionalTaxGrossThreshold) {
-    console.log(`[Payroll] Professional tax skipped: Gross salary ${grossSalaryBase} <= ${professionalTaxGrossThreshold}`);
-  } else if (baseSalary < professionalTaxThreshold) {
-    console.log(`[Payroll] Professional tax skipped: Base salary ${baseSalary} < ${professionalTaxThreshold}`);
+    console.log(`[Payroll] Professional tax: ₹${professionalTax}`);
   }
 
   // Fetch salary adjustments (deductions and additions)
@@ -1752,6 +1835,10 @@ export async function calculateSalary(
       description: adj.Description || undefined,
     }));
     
+    if (incentiveAmount > 0 || totalAdjustmentDeductions > 0 || totalAdjustmentAdditions > 0) {
+      console.log(`[Payroll] Adjustments: ${incentiveAmount > 0 ? `+Incentive ₹${incentiveAmount.toFixed(2)} ` : ''}${totalAdjustmentDeductions > 0 ? `-Deductions ₹${totalAdjustmentDeductions.toFixed(2)} ` : ''}${totalAdjustmentAdditions > 0 ? `+Additions ₹${totalAdjustmentAdditions.toFixed(2)}` : ''}`);
+    }
+    
     if (totalAdjustmentDeductions > 0 || totalAdjustmentAdditions > 0 || incentiveAmount > 0) {
       console.log(`[Payroll] Salary adjustments for employee ${employeeNo} (${month}):`);
       console.log(`[Payroll]   - Incentive (added to gross): ₹${incentiveAmount.toFixed(2)}`);
@@ -1778,7 +1865,6 @@ export async function calculateSalary(
   let cumulativeSalary = 0;
   const cumulativeSalaryThreshold = 50000;
   
-  console.log(`[Payroll] TDS calculation check: joinDateStr=${joinDateStr}, baseSalary=${baseSalary}, tdsThreshold=${tdsThreshold}`);
   
   if (joinDateStr && baseSalary < tdsThreshold) {
     try {
@@ -1795,18 +1881,15 @@ export async function calculateSalary(
       // Salary cycles run from 26th of one month to 25th of next month
       // Example: Jan 26 - Feb 25 is the cycle for "2025-02" month
       let joinCycleStart: Date;
-      let joinCycleEnd: Date;
       
       if (joinDay >= 26) {
         // Joined on or after 26th: belongs to cycle starting on join date's 26th
         // Cycle: joinMonth 26th to (joinMonth+1) 25th
         joinCycleStart = new Date(joinDate.getFullYear(), joinDate.getMonth(), 26);
-        joinCycleEnd = new Date(joinDate.getFullYear(), joinDate.getMonth() + 1, 25);
       } else {
         // Joined before 26th: belongs to previous cycle
         // Cycle: (joinMonth-1) 26th to joinMonth 25th
         joinCycleStart = new Date(joinDate.getFullYear(), joinDate.getMonth() - 1, 26);
-        joinCycleEnd = new Date(joinDate.getFullYear(), joinDate.getMonth(), 25);
       }
       
       // Count salary cycles from join cycle to current cycle (inclusive)
@@ -1838,7 +1921,6 @@ export async function calculateSalary(
       // This represents total salary that would have been paid if employee worked full cycles
       cumulativeSalary = baseSalary * cyclesCount;
       
-      console.log(`[Payroll] Cumulative salary calculation: Joined ${joinDateStr} (cycle: ${formatDate(joinCycleStart)} to ${formatDate(joinCycleEnd)}), Current ${month} (cycle: ${currentCycleRange.start} to ${currentCycleRange.end}), Completed cycles: ${cyclesCount}, Cumulative: ₹${cumulativeSalary.toFixed(2)}`);
     } catch (err) {
       console.warn(`[Payroll] Could not calculate cumulative salary: ${(err as Error).message}`);
       cumulativeSalary = 0; // If calculation fails, don't deduct TDS
@@ -1855,7 +1937,6 @@ export async function calculateSalary(
       isCleaner = department.includes('CLEAN') || designation.includes('CLEAN');
       
       if (isCleaner) {
-        console.log(`[Payroll] Employee ${employeeNo} is a cleaner (Department: ${employeeDetails.Department}, Designation: ${employeeDetails.Designation}) - TDS exemption applied`);
       }
     }
   } catch (err) {
@@ -1871,13 +1952,7 @@ export async function calculateSalary(
   let tdsDeductionWithIncentive = 0;
   if (grossSalaryWithIncentive > 0 && baseSalary < tdsThreshold && cumulativeSalary >= cumulativeSalaryThreshold && !isCleaner) {
     tdsDeductionWithIncentive = parseFloat((grossSalaryWithIncentive * 0.1).toFixed(2));
-    console.log(`[Payroll] TDS applied: ${tdsDeductionWithIncentive} (10% of gross salary ${grossSalaryWithIncentive}) - Base salary ${baseSalary} < ${tdsThreshold} AND cumulative salary ${cumulativeSalary.toFixed(2)} >= ${cumulativeSalaryThreshold}`);
-  } else if (isCleaner) {
-    console.log(`[Payroll] TDS skipped: Employee is a cleaner (Department: ${employeeDetails?.Department || 'N/A'}, Designation: ${employeeDetails?.Designation || 'N/A'})`);
-  } else if (baseSalary >= tdsThreshold) {
-    console.log(`[Payroll] TDS skipped: Base salary ${baseSalary} >= ${tdsThreshold}`);
-  } else if (cumulativeSalary < cumulativeSalaryThreshold) {
-    console.log(`[Payroll] TDS skipped: Cumulative salary ${cumulativeSalary.toFixed(2)} < ${cumulativeSalaryThreshold} (threshold not reached)`);
+    console.log(`[Payroll] TDS: ₹${tdsDeductionWithIncentive.toFixed(2)} (10% of gross ₹${grossSalaryWithIncentive.toFixed(2)})`);
   }
 
   // Calculate final net salary after TDS, Professional Tax, and Salary Adjustments
@@ -1886,6 +1961,8 @@ export async function calculateSalary(
   const netSalary = Math.round(
     grossSalaryWithIncentive - tdsDeductionWithIncentive - professionalTax - totalAdjustmentDeductions + totalAdjustmentAdditions
   );
+  
+  console.log(`[Payroll] Final: Gross ₹${grossSalaryWithIncentive.toFixed(2)} - TDS ₹${tdsDeductionWithIncentive.toFixed(2)} - PT ₹${professionalTax} - Deductions ₹${totalAdjustmentDeductions.toFixed(2)} + Additions ₹${totalAdjustmentAdditions.toFixed(2)} = Net ₹${netSalary.toFixed(2)}`);
 
   // // Update total deductions to include TDS and Professional Tax
   // const totalDeductionsWithTDS = parseFloat(
@@ -1911,8 +1988,8 @@ export async function calculateSalary(
       halfDays: attendance.halfDays,
       absentDays: attendance.absentDays,
       lateDays: attendance.lateDays,
-      lateBy30MinutesDays: attendance.lateBy30MinutesDays || 0,
-      lateBy10MinutesDays: Math.max(0, (attendance.lateDays || 0) - (attendance.lateBy30MinutesDays || 0)), // 10+ min but not 30+ min
+      lateBy30MinutesDays: lateBy30MinutesDays,
+      lateBy10MinutesDays: Math.max(0, totalLateDays - lateBy30MinutesDays), // 10+ min but not 30+ min
       earlyExits: attendance.earlyExits,
       totalWorkedHours: attendance.totalWorkedHours,
       expectedHours,

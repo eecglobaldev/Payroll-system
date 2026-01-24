@@ -39,7 +39,8 @@ export class LeaveModel {
     `;
 
     const result = await query<EmployeeLeaveEntitlement>(sqlQuery, { employeeCode, leaveYear: year });
-    return result.recordset.length > 0 ? result.recordset[0] : null;
+    // Map PostgreSQL lowercase column names to PascalCase
+    return result.recordset.length > 0 ? this.mapToEmployeeLeaveEntitlement(result.recordset[0]) : null;
   }
 
   /**
@@ -68,7 +69,8 @@ export class LeaveModel {
     `;
 
     const result = await query<MonthlyLeaveUsage>(sqlQuery, { employeeCode, leaveMonth: month });
-    return result.recordset.length > 0 ? result.recordset[0] : null;
+    // Map PostgreSQL lowercase column names to PascalCase
+    return result.recordset.length > 0 ? this.mapToMonthlyLeaveUsage(result.recordset[0]) : null;
   }
 
   /**
@@ -225,9 +227,10 @@ export class LeaveModel {
     const existing = await this.getMonthlyLeaveUsage(data.employeeCode, data.month);
     const operation = existing ? 'updated' : 'created';
 
+    // Map PostgreSQL lowercase column names to PascalCase
     return {
       operation,
-      record: result.recordset[0],
+      record: this.mapToMonthlyLeaveUsage(result.recordset[0]),
     };
   }
 
@@ -288,7 +291,43 @@ export class LeaveModel {
       yearPattern: `${year}-%`,
     });
 
-    return result.recordset;
+    // Map PostgreSQL lowercase column names to PascalCase
+    return result.recordset.map(row => this.mapToMonthlyLeaveUsage(row));
+  }
+
+  /**
+   * Map database row to EmployeeLeaveEntitlement interface
+   * Handles both lowercase (PostgreSQL) and PascalCase (legacy) column names
+   */
+  private static mapToEmployeeLeaveEntitlement(row: any): EmployeeLeaveEntitlement {
+    return {
+      EmployeeLeavesId: row.employeeleavesid || row.EmployeeLeavesId,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      LeaveTypeId: row.leavetypeid || row.LeaveTypeId,
+      LeaveYear: row.leaveyear || row.LeaveYear,
+      AllowedLeaves: parseFloat(String(row.allowedleaves || row.AllowedLeaves || 0)),
+      UsedPaidLeaves: parseFloat(String(row.usedpaidleaves || row.UsedPaidLeaves || 0)),
+      UsedCasualLeaves: parseFloat(String(row.usedcasualleaves || row.UsedCasualLeaves || 0)),
+    };
+  }
+
+  /**
+   * Map database row to MonthlyLeaveUsage interface
+   * Handles both lowercase (PostgreSQL) and PascalCase (legacy) column names
+   */
+  private static mapToMonthlyLeaveUsage(row: any): MonthlyLeaveUsage {
+    return {
+      MonthlyLeaveUsageId: row.monthlyleaveusageid || row.MonthlyLeaveUsageId,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      LeaveMonth: row.leavemonth || row.LeaveMonth,
+      PaidLeaveDaysUsed: parseFloat(String(row.paidleavedaysused || row.PaidLeaveDaysUsed || 0)),
+      CasualLeaveDaysUsed: parseFloat(String(row.casualleavedaysused || row.CasualLeaveDaysUsed || 0)),
+      PaidLeaveDates: row.paidleavedates || row.PaidLeaveDates || null,
+      CasualLeaveDates: row.casualleavedates || row.CasualLeaveDates || null,
+      CreatedAt: row.createdat || row.CreatedAt,
+      UpdatedAt: row.updatedat || row.UpdatedAt || null,
+      UpdatedBy: row.updatedby || row.UpdatedBy || null,
+    };
   }
 
   /**

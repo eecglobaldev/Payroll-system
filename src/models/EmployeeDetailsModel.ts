@@ -23,25 +23,25 @@ export class EmployeeDetailsModel {
     try {
       const sqlQuery = `
         SELECT 
-          EmployeeDetailsId,
-          EmployeeCode,
-          JoiningDate,
-          ExitDate,
-          BranchLocation,
-          Department,
-          Designation,
-          BasicSalary,
-          MonthlyCTC,
-          AnnualCTC,
-          Gender,
-          PhoneNumber,
-          Shift,
-          BankAccNo,
-          IFSCCode,
-          CreatedAt,
-          UpdatedAt,
-          CreatedBy,
-          UpdatedBy
+          employeedetailsid,
+          employeecode,
+          joiningdate,
+          exitdate,
+          branchlocation,
+          department,
+          designation,
+          basicsalary,
+          monthlyctc,
+          annualctc,
+          gender,
+          phonenumber,
+          shift,
+          bankaccno,
+          ifsccode,
+          createdat,
+          updatedat,
+          createdby,
+          updatedby
         FROM employeedetails
         WHERE employeecode = @employeeCode
       `;
@@ -53,15 +53,7 @@ export class EmployeeDetailsModel {
       }
 
       const row = result.recordset[0];
-      console.log(`[EmployeeDetailsModel] Raw database row for ${employeeCode}:`, {
-        phonenumber: row.phonenumber,
-        PhoneNumber: row.PhoneNumber,
-        rawRow: row,
-      });
       const mapped = this.mapToEmployeeDetails(row);
-      console.log(`[EmployeeDetailsModel] Mapped employee details:`, {
-        PhoneNumber: mapped.PhoneNumber,
-      });
       return mapped;
     } catch (err) {
       const error = err as Error;
@@ -80,27 +72,27 @@ export class EmployeeDetailsModel {
     try {
       let sqlQuery = `
         SELECT 
-          EmployeeDetailsId,
-          EmployeeCode,
-          JoiningDate,
-          ExitDate,
-          BranchLocation,
-          Department,
-          Designation,
-          BasicSalary,
-          MonthlyCTC,
-          AnnualCTC,
-          Gender,
-          PhoneNumber,
-          Shift,
-          BankAccNo,
-          IFSCCode,
-          CreatedAt,
-          UpdatedAt,
-          CreatedBy,
-          UpdatedBy
+          employeedetailsid,
+          employeecode,
+          joiningdate,
+          exitdate,
+          branchlocation,
+          department,
+          designation,
+          basicsalary,
+          monthlyctc,
+          annualctc,
+          gender,
+          phonenumber,
+          shift,
+          bankaccno,
+          ifsccode,
+          createdat,
+          updatedat,
+          createdby,
+          updatedby
         FROM employeedetails
-        WHERE ExitDate IS NULL
+        WHERE exitdate IS NULL
       `;
       
       // If month is provided, also include employees who exited in that month
@@ -129,13 +121,13 @@ export class EmployeeDetailsModel {
         params.cycleEnd = cycleEndStr;
         
         sqlQuery += `
-          OR (ExitDate IS NOT NULL 
+          OR (exitdate IS NOT NULL 
               AND DATE(exitdate) >= @cycleStart 
               AND DATE(exitdate) <= @cycleEnd)
         `;
       }
       
-      sqlQuery += ` ORDER BY BranchLocation ASC`;
+      sqlQuery += ` ORDER BY branchlocation ASC`;
 
       const result = await query<any>(sqlQuery, params);
       return result.recordset.map(row => this.mapToEmployeeDetails(row));
@@ -153,25 +145,25 @@ export class EmployeeDetailsModel {
     try {
       const sqlQuery = `
         SELECT 
-          EmployeeDetailsId,
-          EmployeeCode,
-          JoiningDate,
-          ExitDate,
-          BranchLocation,
-          Department,
-          Designation,
-          BasicSalary,
-          MonthlyCTC,
-          AnnualCTC,
-          Gender,
-          PhoneNumber,
-          Shift,
-          BankAccNo,
-          IFSCCode,
-          CreatedAt,
-          UpdatedAt,
-          CreatedBy,
-          UpdatedBy
+          employeedetailsid,
+          employeecode,
+          joiningdate,
+          exitdate,
+          branchlocation,
+          department,
+          designation,
+          basicsalary,
+          monthlyctc,
+          annualctc,
+          gender,
+          phonenumber,
+          shift,
+          bankaccno,
+          ifsccode,
+          createdat,
+          updatedat,
+          createdby,
+          updatedby
         FROM employeedetails
         ORDER BY employeecode
       `;
@@ -192,27 +184,27 @@ export class EmployeeDetailsModel {
     try {
       const sqlQuery = `
         SELECT 
-          EmployeeDetailsId,
-          EmployeeCode,
-          JoiningDate,
-          ExitDate,
-          BranchLocation,
-          Department,
-          Designation,
-          BasicSalary,
-          MonthlyCTC,
-          AnnualCTC,
-          Gender,
-          PhoneNumber,
-          Shift,
-          BankAccNo,
-          IFSCCode,
-          CreatedAt,
-          UpdatedAt,
-          CreatedBy,
-          UpdatedBy
+          employeedetailsid,
+          employeecode,
+          joiningdate,
+          exitdate,
+          branchlocation,
+          department,
+          designation,
+          basicsalary,
+          monthlyctc,
+          annualctc,
+          gender,
+          phonenumber,
+          shift,
+          bankaccno,
+          ifsccode,
+          createdat,
+          updatedat,
+          createdby,
+          updatedby
         FROM employeedetails
-        WHERE Department = @department AND ExitDate IS NULL
+        WHERE department = @department AND exitdate IS NULL
         ORDER BY employeecode
       `;
 
@@ -245,22 +237,21 @@ export class EmployeeDetailsModel {
 
       const sqlQuery = `
         INSERT INTO employeedetails (
-          EmployeeCode,
-          JoiningDate,
-          BranchLocation,
-          Department,
-          Designation,
-          BasicSalary,
-          MonthlyCTC,
-          AnnualCTC,
-          Gender,
-          PhoneNumber,
-          Shift,
-          BankAccNo,
-          IFSCCode,
-          CreatedBy
+          employeecode,
+          joiningdate,
+          branchlocation,
+          department,
+          designation,
+          basicsalary,
+          monthlyctc,
+          annualctc,
+          gender,
+          phonenumber,
+          shift,
+          bankaccno,
+          ifsccode,
+          createdby
         )
-        OUTPUT INSERTED.*
         VALUES (
           @employeeCode,
           @joiningDate,
@@ -277,6 +268,26 @@ export class EmployeeDetailsModel {
           @IFSCCode,
           @createdBy
         )
+        RETURNING 
+          employeedetailsid,
+          employeecode,
+          joiningdate,
+          exitdate,
+          branchlocation,
+          department,
+          designation,
+          basicsalary,
+          monthlyctc,
+          annualctc,
+          gender,
+          phonenumber,
+          shift,
+          bankaccno,
+          ifsccode,
+          createdat,
+          updatedat,
+          createdby,
+          updatedby
       `;
 
       const result = await query<any>(sqlQuery, {
@@ -322,59 +333,59 @@ export class EmployeeDetailsModel {
       const params: any = { employeeCode };
 
       if (data.joiningDate !== undefined) {
-        updates.push('JoiningDate = @joiningDate');
+        updates.push('joiningdate = @joiningDate');
         params.joiningDate = data.joiningDate;
       }
       if (data.exitDate !== undefined) {
-        updates.push('ExitDate = @exitDate');
+        updates.push('exitdate = @exitDate');
         params.exitDate = data.exitDate;
       }
       if (data.branchLocation !== undefined) {
-        updates.push('BranchLocation = @branchLocation');
+        updates.push('branchlocation = @branchLocation');
         params.branchLocation = data.branchLocation;
       }
       if (data.department !== undefined) {
-        updates.push('Department = @department');
+        updates.push('department = @department');
         params.department = data.department;
       }
       if (data.designation !== undefined) {
-        updates.push('Designation = @designation');
+        updates.push('designation = @designation');
         params.designation = data.designation;
       }
       if (data.basicSalary !== undefined) {
-        updates.push('BasicSalary = @basicSalary');
+        updates.push('basicsalary = @basicSalary');
         params.basicSalary = data.basicSalary;
       }
       if (data.monthlyCTC !== undefined) {
-        updates.push('MonthlyCTC = @monthlyCTC');
+        updates.push('monthlyctc = @monthlyCTC');
         params.monthlyCTC = data.monthlyCTC;
       }
       if (data.annualCTC !== undefined) {
-        updates.push('AnnualCTC = @annualCTC');
+        updates.push('annualctc = @annualCTC');
         params.annualCTC = data.annualCTC;
       }
       if (data.gender !== undefined) {
-        updates.push('Gender = @gender');
+        updates.push('gender = @gender');
         params.gender = data.gender;
       }
       if (data.phoneNumber !== undefined) {
-        updates.push('PhoneNumber = @phoneNumber');
+        updates.push('phonenumber = @phoneNumber');
         params.phoneNumber = data.phoneNumber;
       }
       if (data.shift !== undefined) {
-        updates.push('Shift = @shift');
+        updates.push('shift = @shift');
         params.shift = data.shift;
       }
       if (data.BankAccNo !== undefined) {
-        updates.push('BankAccNo = @BankAccNo');
+        updates.push('bankaccno = @BankAccNo');
         params.BankAccNo = data.BankAccNo;
       }
       if (data.IFSCCode !== undefined) {
-        updates.push('IFSCCode = @IFSCCode');
+        updates.push('ifsccode = @IFSCCode');
         params.IFSCCode = data.IFSCCode;
       }
       if (data.updatedBy !== undefined) {
-        updates.push('UpdatedBy = @updatedBy');
+        updates.push('updatedby = @updatedBy');
         params.updatedBy = data.updatedBy;
       }
 
@@ -389,7 +400,26 @@ export class EmployeeDetailsModel {
         UPDATE employeedetails
         SET ${updates.join(', ')}
         WHERE employeecode = @employeeCode
-        RETURNING *;
+        RETURNING 
+          employeedetailsid,
+          employeecode,
+          joiningdate,
+          exitdate,
+          branchlocation,
+          department,
+          designation,
+          basicsalary,
+          monthlyctc,
+          annualctc,
+          gender,
+          phonenumber,
+          shift,
+          bankaccno,
+          ifsccode,
+          createdat,
+          updatedat,
+          createdby,
+          updatedby
       `;
 
       const result = await query<any>(sqlQuery, params);

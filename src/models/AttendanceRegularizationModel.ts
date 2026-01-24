@@ -116,7 +116,21 @@ export class AttendanceRegularizationModel {
         ORDER BY regularizationdate
       `, { employeeCode, month });
 
-    return result.recordset;
+    // Map PostgreSQL lowercase column names to PascalCase
+    return result.recordset.map((row: any) => ({
+      Id: row.id || row.Id,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      RegularizationDate: row.regularizationdate || row.RegularizationDate,
+      OriginalStatus: row.originalstatus || row.OriginalStatus,
+      RegularizedStatus: row.regularizedstatus || row.RegularizedStatus,
+      Month: row.month || row.Month,
+      Reason: row.reason || row.Reason,
+      RequestedBy: row.requestedby || row.RequestedBy,
+      ApprovedBy: row.approvedby || row.ApprovedBy,
+      Status: row.status || row.Status,
+      CreatedAt: row.createdat || row.CreatedAt,
+      UpdatedAt: row.updatedat || row.UpdatedAt,
+    }));
   }
 
   /**
@@ -168,6 +182,20 @@ export class AttendanceRegularizationModel {
         ORDER BY regularizationdate
       `, { employeeCode, startDate, endDate });
 
-    return result.recordset;
+    // Map PostgreSQL lowercase column names to PascalCase
+    return result.recordset.map((row: any) => ({
+      Id: row.id || row.Id,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      RegularizationDate: row.regularizationdate || row.RegularizationDate,
+      OriginalStatus: row.originalstatus || row.OriginalStatus,
+      RegularizedStatus: row.regularizedstatus || row.RegularizedStatus,
+      Month: row.month || row.Month,
+      Reason: row.reason || row.Reason,
+      RequestedBy: row.requestedby || row.RequestedBy,
+      ApprovedBy: row.approvedby || row.ApprovedBy,
+      Status: row.status || row.Status,
+      CreatedAt: row.createdat || row.CreatedAt,
+      UpdatedAt: row.updatedat || row.UpdatedAt,
+    }));
   }
 }

@@ -136,7 +136,7 @@ export class EmployeeShiftAssignmentModel {
         toDate: request.toDate,
       });
 
-      const newId = result.recordset[0].Id;
+      const newId = result.recordset[0].id || result.recordset[0].Id;
 
       // Fetch the created assignment
       const created = await this.getById(newId);
@@ -160,14 +160,14 @@ export class EmployeeShiftAssignmentModel {
     try {
       const sqlQuery = `
         SELECT
-          Id,
-          EmployeeCode,
-          ShiftName,
-          FromDate,
-          ToDate,
-          CreatedAt
+          id,
+          employeecode,
+          shiftname,
+          fromdate,
+          todate,
+          createdat
         FROM employee_shift_assignments
-        WHERE Id = @id
+        WHERE id = @id
       `;
 
       const result = await query<any>(sqlQuery, { id });
@@ -191,8 +191,8 @@ export class EmployeeShiftAssignmentModel {
   static async deleteById(id: number): Promise<boolean> {
     try {
       const sqlQuery = `
-        DELETE FROM dbo.Employee_Shift_Assignments
-        WHERE Id = @id
+        DELETE FROM employee_shift_assignments
+        WHERE id = @id
       `;
 
       const result = await query<any>(sqlQuery, { id });
@@ -213,15 +213,15 @@ export class EmployeeShiftAssignmentModel {
     try {
       const sqlQuery = `
         SELECT
-          Id,
-          EmployeeCode,
-          ShiftName,
-          FromDate,
-          ToDate,
-          CreatedAt
+          id,
+          employeecode,
+          shiftname,
+          fromdate,
+          todate,
+          createdat
         FROM employee_shift_assignments
         WHERE employeecode = @employeeCode
-        ORDER BY FromDate ASC, CreatedAt DESC
+        ORDER BY fromdate ASC, createdat DESC
       `;
 
       const result = await query<any>(sqlQuery, { employeeCode });
@@ -238,16 +238,16 @@ export class EmployeeShiftAssignmentModel {
    */
   private static mapToShiftAssignment(row: any): EmployeeShiftAssignment {
     return {
-      Id: row.Id,
-      EmployeeCode: row.EmployeeCode,
-      ShiftName: row.ShiftName,
-      FromDate: row.FromDate instanceof Date 
-        ? row.FromDate.toISOString().split('T')[0] 
-        : row.FromDate,
-      ToDate: row.ToDate instanceof Date 
-        ? row.ToDate.toISOString().split('T')[0] 
-        : row.ToDate,
-      CreatedAt: row.CreatedAt,
+      Id: row.id || row.Id,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      ShiftName: row.shiftname || row.ShiftName,
+      FromDate: (row.fromdate || row.FromDate) instanceof Date 
+        ? (row.fromdate || row.FromDate).toISOString().split('T')[0] 
+        : (row.fromdate || row.FromDate),
+      ToDate: (row.todate || row.ToDate) instanceof Date 
+        ? (row.todate || row.ToDate).toISOString().split('T')[0] 
+        : (row.todate || row.ToDate),
+      CreatedAt: row.createdat || row.CreatedAt,
     };
   }
 }

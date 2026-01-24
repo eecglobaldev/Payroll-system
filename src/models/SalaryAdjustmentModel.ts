@@ -65,7 +65,8 @@ export class SalaryAdjustmentModel {
     `;
 
     const result = await query<SalaryAdjustment>(sqlQuery, { employeeCode, month });
-    return result.recordset;
+    // Map PostgreSQL lowercase column names to PascalCase
+    return result.recordset.map(row => this.mapToSalaryAdjustment(row));
   }
 
   /**
@@ -193,7 +194,27 @@ export class SalaryAdjustmentModel {
     const existing = await this.getAdjustments(data.employeeCode, data.month);
     const operation = existing.length > 1 ? 'updated' : 'created';
 
-    return { operation, record: result.recordset[0] };
+    // Map PostgreSQL lowercase column names to PascalCase
+    return { operation, record: this.mapToSalaryAdjustment(result.recordset[0]) };
+  }
+
+  /**
+   * Map database row to SalaryAdjustment interface
+   * Handles both lowercase (PostgreSQL) and PascalCase (legacy) column names
+   */
+  private static mapToSalaryAdjustment(row: any): SalaryAdjustment {
+    return {
+      Id: row.id || row.Id,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      Month: row.month || row.Month,
+      Type: row.type || row.Type,
+      Category: row.category || row.Category,
+      Amount: parseFloat(String(row.amount || row.Amount || 0)),
+      Description: row.description || row.Description || null,
+      CreatedBy: row.createdby || row.CreatedBy || null,
+      CreatedAt: row.createdat || row.CreatedAt,
+      UpdatedAt: row.updatedat || row.UpdatedAt || null,
+    };
   }
 
   /**

@@ -100,8 +100,9 @@ export class SalaryController {
 
       // Always pass arrays (even if empty) to prevent backend from fetching stale data from DB
       // Empty arrays explicitly mean "no leaves", undefined means "fetch from DB"
+      // userid in devicelogs is VARCHAR (string), convert to string
       const salaryData = await payroll.calculateSalary(
-        parseInt(userId, 10), 
+        String(userId), 
         month,
         joinDate,
         exitDate,
@@ -118,8 +119,9 @@ export class SalaryController {
       if (!dailyBreakdown || dailyBreakdown.length === 0) {
         console.warn('[SalaryController] dailyBreakdown not found in salaryData.attendance, fetching separately...');
         try {
+          // userid in devicelogs is VARCHAR (string), convert to string
           const fallbackBreakdown = await payroll.calculateMonthlyHours(
-            parseInt(userId, 10),
+            String(userId),
             month,
             joinDate,
             exitDate,
@@ -300,7 +302,8 @@ export class SalaryController {
         return;
       }
 
-      const hoursData = await payroll.calculateMonthlyHours(parseInt(userId, 10), month);
+      // userid in devicelogs is VARCHAR (string), convert to string
+      const hoursData = await payroll.calculateMonthlyHours(String(userId), month);
 
       res.json({
         success: true,
@@ -332,7 +335,8 @@ export class SalaryController {
         return;
       }
 
-      const hoursData = await payroll.calculateMonthlyHours(parseInt(userId, 10), month);
+      // userid in devicelogs is VARCHAR (string), convert to string
+      const hoursData = await payroll.calculateMonthlyHours(String(userId), month);
 
       res.json({
         success: true,
@@ -392,7 +396,8 @@ export class SalaryController {
 
       for (const code of employeeCodes) {
         try {
-          const userId = typeof code === 'string' ? parseInt(code, 10) : code;
+          // userid in devicelogs is VARCHAR (string), use as string
+          const userId = String(code);
           const salaryData = await payroll.calculateSalary(userId, targetMonth);
           results.push(salaryData);
         } catch (err) {
@@ -480,10 +485,8 @@ export class SalaryController {
         // Process chunk in parallel with Promise.all
         const chunkPromises = chunk.map(async (code) => {
           try {
-            const userId = parseInt(code, 10);
-            if (isNaN(userId)) {
-              throw new Error(`Invalid employee code: ${code}`);
-            }
+            // userid in devicelogs is VARCHAR (string), use as string
+            const userId = String(code);
             
             // Get employee details for joining/exit dates
             const empDetails = employeeDetailsMap.get(code);
@@ -703,14 +706,8 @@ export class SalaryController {
         return;
       }
 
-      const employeeId = parseInt(userId, 10);
-      if (isNaN(employeeId)) {
-        res.status(400).json({
-          error: 'Validation Error',
-          message: 'Invalid employee ID',
-        });
-        return;
-      }
+      // userid in devicelogs is VARCHAR (string), use as string
+      const employeeId = String(userId);
 
       // Get current date in local timezone (YYYY-MM-DD)
       const today = new Date();
@@ -766,6 +763,7 @@ export class SalaryController {
         // Query raw logs for the missing end date
         const { AttendanceModel } = await import('../models/AttendanceModel.js');
         try {
+          // userid in devicelogs is VARCHAR (string), already a string
           const dayLogs = await AttendanceModel.getDailyByEmployeeAndDate(employeeId, endDateStr);
           if (dayLogs.length > 0) {
             // Process this day's logs into daily breakdown format

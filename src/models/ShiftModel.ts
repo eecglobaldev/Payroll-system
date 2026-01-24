@@ -103,6 +103,10 @@ export class ShiftModel {
     return null;
   }
 
+  // Cache for shift timing parsing to avoid repeated warnings
+  private static shiftTimingCache = new Map<string, ShiftTiming | null>();
+  private static warnedShifts = new Set<string>();
+
   /**
    * Parse shift timing for calculations
    * Converts TIME (Date object or string) to hour/minute numbers
@@ -111,6 +115,12 @@ export class ShiftModel {
   static parseShiftTiming(shift: Shift | null): ShiftTiming | null {
     if (!shift) {
       return null;
+    }
+
+    // Check cache first
+    const cacheKey = shift.ShiftName || 'unknown';
+    if (this.shiftTimingCache.has(cacheKey)) {
+      return this.shiftTimingCache.get(cacheKey) || null;
     }
 
     try {
@@ -130,7 +140,10 @@ export class ShiftModel {
         } else if (timeValue === null || timeValue === undefined) {
           return null;
         } else {
-          console.error('[ShiftModel] Invalid time format:', typeof timeValue, timeValue);
+          if (!this.warnedShifts.has(cacheKey)) {
+            console.error('[ShiftModel] Invalid time format:', typeof timeValue, timeValue);
+            this.warnedShifts.add(cacheKey);
+          }
           return null;
         }
       };
@@ -144,11 +157,16 @@ export class ShiftModel {
         const end2 = parseTime(shift.EndTime_2);
 
         if (!start1 || !end1 || !start2 || !end2) {
-          console.error('[ShiftModel] Split shift has missing or invalid slot times');
+          // Only log warning once per shift
+          if (!this.warnedShifts.has(cacheKey)) {
+            console.warn(`[ShiftModel] Split shift "${cacheKey}" has missing or invalid slot times`);
+            this.warnedShifts.add(cacheKey);
+          }
+          this.shiftTimingCache.set(cacheKey, null);
           return null;
         }
 
-        return {
+        const result = {
           startHour: 0, // Not used for split shifts
           startMinute: 0,
           endHour: 0,
@@ -169,17 +187,23 @@ export class ShiftModel {
             endMinute: end2.minute,
           },
         };
+        this.shiftTimingCache.set(cacheKey, result);
+        return result;
       } else {
         // Parse normal shift times
         const start = parseTime(shift.StartTime);
         const end = parseTime(shift.EndTime);
 
         if (!start || !end) {
-          console.error('[ShiftModel] Normal shift has invalid start or end time');
+          if (!this.warnedShifts.has(cacheKey)) {
+            console.warn(`[ShiftModel] Normal shift "${cacheKey}" has invalid start or end time`);
+            this.warnedShifts.add(cacheKey);
+          }
+          this.shiftTimingCache.set(cacheKey, null);
           return null;
         }
 
-        return {
+        const result = {
           startHour: start.hour,
           startMinute: start.minute,
           endHour: end.hour,
@@ -188,9 +212,15 @@ export class ShiftModel {
           lateThresholdMinutes: shift.LateThresholdMinutes,
           isSplitShift: false,
         };
+        this.shiftTimingCache.set(cacheKey, result);
+        return result;
       }
     } catch (error: any) {
-      console.error('[ShiftModel] Error parsing shift timing:', error.message, error);
+      if (!this.warnedShifts.has(cacheKey)) {
+        console.error(`[ShiftModel] Error parsing shift timing for "${cacheKey}":`, error.message);
+        this.warnedShifts.add(cacheKey);
+      }
+      this.shiftTimingCache.set(cacheKey, null);
       return null;
     }
   }
@@ -200,19 +230,19 @@ export class ShiftModel {
    */
   private static mapToShift(row: any): Shift {
     return {
-      ShiftId: row.ShiftId,
-      ShiftName: row.ShiftName,
-      StartTime: row.StartTime, // TIME format from SQL Server
-      EndTime: row.EndTime, // TIME format from SQL Server
-      IsSplitShift: Boolean(row.IsSplitShift),
-      StartTime_1: row.StartTime_1 || null,
-      EndTime_1: row.EndTime_1 || null,
-      StartTime_2: row.StartTime_2 || null,
-      EndTime_2: row.EndTime_2 || null,
-      WorkHours: parseFloat(row.WorkHours),
-      LateThresholdMinutes: parseInt(row.LateThresholdMinutes, 10),
-      CreatedAt: row.CreatedAt,
-      UpdatedAt: row.UpdatedAt,
+      ShiftId: row.shiftid || row.ShiftId,
+      ShiftName: row.shiftname || row.ShiftName,
+      StartTime: row.starttime || row.StartTime, // TIME format from PostgreSQL
+      EndTime: row.endtime || row.EndTime, // TIME format from PostgreSQL
+      IsSplitShift: Boolean(row.issplitshift || row.IsSplitShift),
+      StartTime_1: row.starttime_1 || row.StartTime_1 || null,
+      EndTime_1: row.endtime_1 || row.EndTime_1 || null,
+      StartTime_2: row.starttime_2 || row.StartTime_2 || null,
+      EndTime_2: row.endtime_2 || row.EndTime_2 || null,
+      WorkHours: parseFloat(String(row.workhours || row.WorkHours || 0)),
+      LateThresholdMinutes: parseInt(String(row.latethresholdminutes || row.LateThresholdMinutes || 0), 10),
+      CreatedAt: row.createdat || row.CreatedAt,
+      UpdatedAt: row.updatedat || row.UpdatedAt,
     };
   }
 }

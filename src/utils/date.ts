@@ -127,3 +127,25 @@ export function formatDateTime(date: Date | string): string {
   return `${formatDate(d)} ${formatTime(d)}`;
 }
 
+/**
+ * Format date as local time string (YYYY-MM-DDTHH:mm:ss) without timezone conversion
+ * IMPORTANT: This function expects a Date object created by parseAsLocalTime()
+ * which stores the original database time in UTC components
+ * Used for firstEntry/lastExit to avoid timezone shifts
+ */
+export function formatLocalDateTime(date: Date | string): string {
+  const d = date instanceof Date ? date : new Date(date);
+  
+  // Use UTC components because parseAsLocalTime() stores original time in UTC fields
+  // This preserves the original database time without timezone conversion
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(d.getUTCSeconds()).padStart(2, '0');
+  const milliseconds = String(d.getUTCMilliseconds()).padStart(3, '0');
+  
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+

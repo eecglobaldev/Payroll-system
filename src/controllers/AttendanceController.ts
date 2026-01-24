@@ -89,7 +89,8 @@ export class AttendanceController {
         return;
       }
 
-      const logs = await AttendanceModel.getByEmployeeAndDateRange(parseInt(userId, 10), start, end);
+      // userid in devicelogs is VARCHAR (string), convert to string
+      const logs = await AttendanceModel.getByEmployeeAndDateRange(String(userId), start, end);
 
       res.json({
         success: true,
@@ -124,7 +125,8 @@ export class AttendanceController {
         return;
       }
 
-      const summary = await AttendanceModel.getSummaryByEmployeeAndDateRange(parseInt(userId, 10), start, end);
+      // userid in devicelogs is VARCHAR (string), convert to string
+      const summary = await AttendanceModel.getSummaryByEmployeeAndDateRange(String(userId), start, end);
 
       if (!summary) {
         res.json({
@@ -168,7 +170,8 @@ export class AttendanceController {
         return;
       }
 
-      const logs = await AttendanceModel.getDailyByEmployeeAndDate(parseInt(userId, 10), date);
+      // userid in devicelogs is VARCHAR (string), convert to string
+      const logs = await AttendanceModel.getDailyByEmployeeAndDate(String(userId), date);
 
       res.json({
         success: true,

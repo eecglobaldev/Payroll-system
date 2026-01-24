@@ -47,18 +47,13 @@ async function checkAbsentOnNextMonthFirstFive(
     checkDates.push(dateStr);
   }
   
-  const userId = parseInt(employeeCode, 10);
-  if (isNaN(userId)) {
-    console.warn(`[SalaryHoldService] Invalid employee code: ${employeeCode}`);
-    return [];
-  }
-  
+  // userid in devicelogs is VARCHAR (string), use employeeCode directly as string
   // Get attendance logs for dates 1-5
   const startDate = checkDates[0];
   const endDate = checkDates[checkDates.length - 1];
   
   const logs = await AttendanceModel.getByEmployeeAndDateRange(
-    userId,
+    employeeCode, // Pass as string directly
     startDate,
     endDate
   );

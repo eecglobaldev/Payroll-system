@@ -35,16 +35,7 @@ export function verifyToken(token: string): JWTPayload | null {
       console.warn('[JWT] Using default JWT_SECRET - not secure for production!');
     }
     
-    console.log('[JWT] Verifying token, secret configured:', !!secret, 'Token length:', token.length);
-    
     const decoded = jwt.verify(token, secret) as any;
-    
-    console.log('[JWT] Full decoded token payload:', JSON.stringify(decoded, null, 2));
-    console.log('[JWT] Token verified successfully:', {
-      employeeCode: decoded.employeeCode,
-      role: decoded.role,
-      userId: decoded.userId,
-    });
     
     return {
       employeeCode: decoded.employeeCode,

@@ -39,18 +39,18 @@ export class AttendanceLogController {
 
       const sqlQuery = `
         SELECT 
-          UserId,
-          LogDate,
-          Direction,
-          DeviceId
+          userid,
+          logdate,
+          direction,
+          deviceid
         FROM ${tableName}
-        WHERE UserId = @userId
-          AND CAST(LogDate AS DATE) = CAST(@date AS DATE)
-        ORDER BY LogDate ASC
+        WHERE userid = @userId
+          AND DATE(logdate) = @date
+        ORDER BY logdate ASC
       `;
 
       const result = await query<any>(sqlQuery, { 
-        userId: parseInt(userId, 10), 
+        userId: String(userId), // userid is VARCHAR in PostgreSQL
         date 
       });
 
@@ -94,7 +94,9 @@ export class AttendanceLogController {
       };
 
       const logs = result.recordset.map((row: any) => {
-        const localDate = parseAsLocalTime(row.LogDate);
+        // PostgreSQL returns lowercase column names
+        const logDate = row.logdate || row.LogDate;
+        const localDate = parseAsLocalTime(logDate);
         const hours = localDate.getHours();
         const minutes = localDate.getMinutes();
         const seconds = localDate.getSeconds();
@@ -105,10 +107,10 @@ export class AttendanceLogController {
         const timeStr = `${String(displayHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} ${period}`;
         
         return {
-          userId: row.UserId,
-          logDate: row.LogDate,
-          direction: row.Direction || 'in',
-          deviceId: row.DeviceId,
+          userId: row.userid || row.UserId,
+          logDate: logDate,
+          direction: row.direction || row.Direction || 'in',
+          deviceId: row.deviceid || row.DeviceId,
           time: timeStr,
           timestamp: localDate.getTime() // For sorting
         };

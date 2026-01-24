@@ -45,7 +45,6 @@ export function verifyJWT(req: Request, res: Response, next: NextFunction): void
       return;
     }
     
-    console.log('[JWT Auth] Verifying token, length:', token.length);
     const payload = verifyToken(token);
     
     if (!payload) {
@@ -57,7 +56,6 @@ export function verifyJWT(req: Request, res: Response, next: NextFunction): void
       return;
     }
 
-    console.log('[JWT Auth] Token verified successfully for:', payload.employeeCode);
     
     // Attach employee info to request
     req.employeeCode = payload.employeeCode;
