@@ -462,26 +462,27 @@ export class EmployeeDetailsModel {
    * Helper: Map database row to EmployeeDetails interface
    */
   private static mapToEmployeeDetails(row: any): EmployeeDetails {
+    // Handle both lowercase (PostgreSQL) and PascalCase (legacy) column names
     return {
-      EmployeeDetailsId: row.EmployeeDetailsId,
-      EmployeeCode: row.EmployeeCode,
-      JoiningDate: row.JoiningDate ? this.formatDate(row.JoiningDate) : null,
-      ExitDate: row.ExitDate ? this.formatDate(row.ExitDate) : null,
-      BranchLocation: row.BranchLocation,
-      Department: row.Department,
-      Designation: row.Designation,
-      BasicSalary: parseFloat(row.BasicSalary),
-      MonthlyCTC: row.MonthlyCTC ? parseFloat(row.MonthlyCTC) : null,
-      AnnualCTC: row.AnnualCTC ? parseFloat(row.AnnualCTC) : null,
-      Gender: row.Gender,
-      PhoneNumber: row.PhoneNumber,
-      Shift: row.Shift || null,
-      BankAccNo: row.BankAccNo || null,
-      IFSCCode: row.IFSCCode || row.IFSCcode || null,
-      CreatedAt: row.CreatedAt,
-      UpdatedAt: row.UpdatedAt,
-      CreatedBy: row.CreatedBy,
-      UpdatedBy: row.UpdatedBy,
+      EmployeeDetailsId: row.employeedetailsid || row.EmployeeDetailsId,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      JoiningDate: (row.joiningdate || row.JoiningDate) ? this.formatDate(row.joiningdate || row.JoiningDate) : null,
+      ExitDate: (row.exitdate || row.ExitDate) ? this.formatDate(row.exitdate || row.ExitDate) : null,
+      BranchLocation: row.branchlocation || row.BranchLocation,
+      Department: row.department || row.Department,
+      Designation: row.designation || row.Designation,
+      BasicSalary: parseFloat(row.basicsalary || row.BasicSalary),
+      MonthlyCTC: (row.monthlyctc || row.MonthlyCTC) ? parseFloat(row.monthlyctc || row.MonthlyCTC) : null,
+      AnnualCTC: (row.annualctc || row.AnnualCTC) ? parseFloat(row.annualctc || row.AnnualCTC) : null,
+      Gender: row.gender || row.Gender,
+      PhoneNumber: row.phonenumber || row.PhoneNumber,
+      Shift: row.shift || row.Shift || null,
+      BankAccNo: row.bankaccno || row.BankAccNo || null,
+      IFSCCode: row.ifsccode || row.IFSCCode || row.IFSCcode || null,
+      CreatedAt: row.createdat || row.CreatedAt,
+      UpdatedAt: row.updatedat || row.UpdatedAt,
+      CreatedBy: row.createdby || row.CreatedBy,
+      UpdatedBy: row.updatedby || row.UpdatedBy,
     };
   }
 

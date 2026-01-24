@@ -57,8 +57,15 @@ export class AuthController {
         return;
       }
 
-      // Check if phone number exists
-      if (!employeeDetails.PhoneNumber) {
+      // Check if phone number exists (handle empty strings and whitespace)
+      if (!employeeDetails.PhoneNumber || employeeDetails.PhoneNumber.trim() === '') {
+        console.error(`[AuthController] Phone number check failed for ${employeeCode}:`, {
+          phoneNumber: employeeDetails.PhoneNumber,
+          isNull: employeeDetails.PhoneNumber === null,
+          isUndefined: employeeDetails.PhoneNumber === undefined,
+          isEmpty: employeeDetails.PhoneNumber === '',
+          trimmedEmpty: employeeDetails.PhoneNumber?.trim() === '',
+        });
         res.status(400).json({
           success: false,
           error: 'Phone number not registered. Please contact HR.',

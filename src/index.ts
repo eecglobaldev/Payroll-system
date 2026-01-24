@@ -26,6 +26,10 @@ import authRoutes from './routes/auth.js';
 
 // Initialize Express app
 const app: Application = express();
+
+// Trust proxy for rate limiting behind reverse proxy (DigitalOcean, Cloudflare, etc.)
+app.set('trust proxy', 1);
+
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 /**
