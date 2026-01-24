@@ -26,6 +26,7 @@ export function verifyJWT(req: Request, res: Response, next: NextFunction): void
     const authHeader = req.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.warn('[JWT Auth] No authorization header or invalid format');
       res.status(401).json({
         success: false,
         error: 'Unauthorized - No token provided',
@@ -35,9 +36,20 @@ export function verifyJWT(req: Request, res: Response, next: NextFunction): void
 
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     
+    if (!token || token.trim() === '') {
+      console.warn('[JWT Auth] Empty token');
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized - No token provided',
+      });
+      return;
+    }
+    
+    console.log('[JWT Auth] Verifying token, length:', token.length);
     const payload = verifyToken(token);
     
     if (!payload) {
+      console.error('[JWT Auth] Token verification failed - invalid or expired');
       res.status(401).json({
         success: false,
         error: 'Unauthorized - Invalid or expired token',
@@ -45,6 +57,8 @@ export function verifyJWT(req: Request, res: Response, next: NextFunction): void
       return;
     }
 
+    console.log('[JWT Auth] Token verified successfully for:', payload.employeeCode);
+    
     // Attach employee info to request
     req.employeeCode = payload.employeeCode;
     req.userId = payload.userId;
@@ -52,10 +66,12 @@ export function verifyJWT(req: Request, res: Response, next: NextFunction): void
 
     next();
   } catch (error) {
-    console.error('[JWT Auth] Error verifying token:', error);
+    const err = error as Error;
+    console.error('[JWT Auth] Error verifying token:', err.message, err.stack);
     res.status(401).json({
       success: false,
       error: 'Unauthorized - Token verification failed',
+      message: process.env.NODE_ENV === 'development' ? err.message : undefined,
     });
   }
 }
