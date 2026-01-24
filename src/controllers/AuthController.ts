@@ -40,6 +40,12 @@ export class AuthController {
       // Get employee details for phone number
       const employeeDetails = await EmployeeDetailsModel.getByCode(employeeCode);
       
+      console.log(`[AuthController] Employee details for ${employeeCode}:`, {
+        phoneNumber: employeeDetails?.PhoneNumber,
+        department: employeeDetails?.Department,
+        designation: employeeDetails?.Designation,
+      });
+      
       if (!employeeDetails) {
         res.status(404).json({
           success: false,

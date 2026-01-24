@@ -38,6 +38,11 @@ export class EmployeeSelfServiceController {
       // Get employee details
       const employeeDetails = await EmployeeDetailsModel.getByCode(employeeCode);
       
+      console.log(`[EmployeeSelfService] Profile data for ${employeeCode}:`, {
+        phoneFromDB: employeeDetails?.PhoneNumber,
+        department: employeeDetails?.Department,
+      });
+      
       // Combine data into profile format
       const profile = {
         employeeCode: employee.EmployeeCode,
@@ -51,6 +56,10 @@ export class EmployeeSelfServiceController {
         joiningDate: employeeDetails?.JoiningDate || null,
         shift: employeeDetails?.Shift || null,
       };
+      
+      console.log(`[EmployeeSelfService] Final profile response:`, {
+        phone: profile.phone,
+      });
 
       res.json({
         success: true,

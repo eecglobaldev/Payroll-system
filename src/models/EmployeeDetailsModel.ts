@@ -53,7 +53,16 @@ export class EmployeeDetailsModel {
       }
 
       const row = result.recordset[0];
-      return this.mapToEmployeeDetails(row);
+      console.log(`[EmployeeDetailsModel] Raw database row for ${employeeCode}:`, {
+        phonenumber: row.phonenumber,
+        PhoneNumber: row.PhoneNumber,
+        rawRow: row,
+      });
+      const mapped = this.mapToEmployeeDetails(row);
+      console.log(`[EmployeeDetailsModel] Mapped employee details:`, {
+        PhoneNumber: mapped.PhoneNumber,
+      });
+      return mapped;
     } catch (err) {
       const error = err as Error;
       console.error('[EmployeeDetailsModel] Error fetching employee details:', error.message);
