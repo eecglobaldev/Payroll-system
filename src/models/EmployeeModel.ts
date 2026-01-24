@@ -8,6 +8,25 @@ import { Employee, BaseSalaryInfo } from '../types/index.js';
 
 export class EmployeeModel {
   /**
+   * Map database row to Employee interface
+   * Handles both lowercase (PostgreSQL default) and PascalCase column names
+   */
+  private static mapToEmployee(row: any): Employee {
+    return {
+      EmployeeId: row.employeeid || row.EmployeeId || row.employeeId,
+      EmployeeCode: row.employeecode || row.EmployeeCode || row.employeeCode,
+      EmployeeName: row.employeename || row.EmployeeName || row.employeeName,
+      StringCode: row.stringcode || row.StringCode || row.stringCode,
+      NumericCode: row.numericcode || row.NumericCode || row.numericCode,
+      Gender: row.gender || row.Gender,
+      CompanyId: row.companyid || row.CompanyId || row.companyId,
+      DepartmentId: row.departmentid || row.DepartmentId || row.departmentId,
+      Designation: row.designation || row.Designation,
+      CategoryId: row.categoryid || row.CategoryId || row.categoryId,
+    };
+  }
+
+  /**
    * Get employee by code
    */
   static async getByCode(employeeCode: string): Promise<Employee | null> {
@@ -27,8 +46,13 @@ export class EmployeeModel {
       WHERE employeecode = @employeeCode
     `;
 
-    const result = await query<Employee>(sqlQuery, { employeeCode });
-    return result.recordset.length > 0 ? result.recordset[0] : null;
+    const result = await query<any>(sqlQuery, { employeeCode });
+    if (result.recordset.length === 0) {
+      return null;
+    }
+    
+    // Map database row to Employee interface
+    return this.mapToEmployee(result.recordset[0]);
   }
 
   /**

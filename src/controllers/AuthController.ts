@@ -179,18 +179,44 @@ export class AuthController {
       }
 
       // Generate JWT token
-      const token = generateToken({
-        employeeCode: employee.EmployeeCode,
-        role: 'EMPLOYEE',
-        userId: employee.EmployeeId,
+      // Ensure we have valid employeeCode and EmployeeId
+      const employeeCode = employee.EmployeeCode || employee.employeecode || employee.employeeCode;
+      const employeeId = employee.EmployeeId || employee.employeeid || employee.employeeId;
+      
+      if (!employeeCode) {
+        console.error('[AuthController] EmployeeCode is missing from employee object:', employee);
+        res.status(500).json({
+          success: false,
+          error: 'Internal server error - Employee code not found',
+        });
+        return;
+      }
+      
+      console.log('[AuthController] Generating token for employee:', {
+        EmployeeCode: employeeCode,
+        EmployeeId: employeeId,
+        EmployeeName: employee.EmployeeName || employee.employeename,
+        RawEmployee: employee,
       });
+      
+      const tokenPayload = {
+        employeeCode: employeeCode,
+        role: 'EMPLOYEE',
+        userId: employeeId,
+      };
+      
+      console.log('[AuthController] Token payload:', tokenPayload);
+      
+      const token = generateToken(tokenPayload);
+      
+      console.log('[AuthController] Token generated, length:', token.length);
 
       // Return token and employee info
       res.json({
         success: true,
         data: {
           token,
-          employeeCode: employee.EmployeeCode,
+          employeeCode: employeeCode,
           role: 'EMPLOYEE',
         },
         message: 'OTP verified successfully',

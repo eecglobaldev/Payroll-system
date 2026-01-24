@@ -39,6 +39,7 @@ export function verifyToken(token: string): JWTPayload | null {
     
     const decoded = jwt.verify(token, secret) as any;
     
+    console.log('[JWT] Full decoded token payload:', JSON.stringify(decoded, null, 2));
     console.log('[JWT] Token verified successfully:', {
       employeeCode: decoded.employeeCode,
       role: decoded.role,
