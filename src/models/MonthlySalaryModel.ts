@@ -156,26 +156,51 @@ export class MonthlySalaryModel {
     month: string,
     finalizedOnly: boolean = false
   ): Promise<MonthlySalary | null> {
-    const statusFilter = finalizedOnly ? 'AND status = 1' : '';
+    try {
+      const statusFilter = finalizedOnly ? 'AND status = 1' : '';
+      const sqlQuery = `
+        SELECT 
+          id, employeecode, month, grosssalary, netsalary, basesalary,
+          paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+          isheld, holdreason, calculatedat, calculatedby, status,
+          perdayrate, totalworkedhours, overtimehours, overtimeamount,
+          tdsdeduction, professionaltax, incentiveamount, breakdownjson
+        FROM monthlysalary
+        WHERE employeecode = @employeeCode AND month = @month ${statusFilter}
+      `;
 
-    const sqlQuery = `
-      SELECT 
-        id, employeecode, month, grosssalary, netsalary, basesalary,
-        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
-        isheld, holdreason, calculatedat, calculatedby, status,
-        perdayrate, totalworkedhours, overtimehours, overtimeamount,
-        tdsdeduction, professionaltax, incentiveamount, breakdownjson
-      FROM monthlysalary
-      WHERE employeecode = @employeeCode AND month = @month ${statusFilter}
-    `;
+      console.log('[MonthlySalaryModel] getSalary query:', {
+        employeeCode,
+        month,
+        finalizedOnly,
+        sqlQuery: sqlQuery.substring(0, 200),
+      });
 
-    const result = await query<MonthlySalary>(sqlQuery, { employeeCode, month });
+      const result = await query<MonthlySalary>(sqlQuery, { employeeCode, month });
 
-    if (result.recordset.length === 0) {
-      return null;
+      console.log('[MonthlySalaryModel] getSalary result:', {
+        recordCount: result.recordset.length,
+        hasRecords: result.recordset.length > 0,
+      });
+
+      if (result.recordset.length === 0) {
+        return null;
+      }
+
+      const mapped = this.mapToMonthlySalary(result.recordset[0]);
+      console.log('[MonthlySalaryModel] Mapped salary:', {
+        month: mapped.Month,
+        employeeCode: mapped.EmployeeCode,
+        grossSalary: mapped.GrossSalary,
+        netSalary: mapped.NetSalary,
+      });
+      return mapped;
+    } catch (error) {
+      const err = error as Error;
+      console.error('[MonthlySalaryModel] Error in getSalary:', err.message);
+      console.error('[MonthlySalaryModel] Error stack:', err.stack);
+      throw err;
     }
-
-    return this.mapToMonthlySalary(result.recordset[0]);
   }
 
   /**
@@ -187,28 +212,50 @@ export class MonthlySalaryModel {
     employeeCode: string,
     finalizedOnly: boolean = false
   ): Promise<MonthlySalary | null> {
-    const statusFilter = finalizedOnly ? 'AND status = 1' : '';
+    try {
+      const statusFilter = finalizedOnly ? 'AND status = 1' : '';
+      const sqlQuery = `
+        SELECT 
+          id, employeecode, month, grosssalary, netsalary, basesalary,
+          paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+          isheld, holdreason, calculatedat, calculatedby, status,
+          perdayrate, totalworkedhours, overtimehours, overtimeamount,
+          tdsdeduction, professionaltax, incentiveamount, breakdownjson
+        FROM monthlysalary
+        WHERE employeecode = @employeeCode ${statusFilter}
+        ORDER BY month DESC
+        LIMIT 1
+      `;
 
-    const sqlQuery = `
-      SELECT 
-        id, employeecode, month, grosssalary, netsalary, basesalary,
-        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
-        isheld, holdreason, calculatedat, calculatedby, status,
-        perdayrate, totalworkedhours, overtimehours, overtimeamount,
-        tdsdeduction, professionaltax, incentiveamount, breakdownjson
-      FROM monthlysalary
-      WHERE employeecode = @employeeCode ${statusFilter}
-      ORDER BY month DESC
-      LIMIT 1
-    `;
+      console.log('[MonthlySalaryModel] getLatestSalary query:', {
+        employeeCode,
+        finalizedOnly,
+        sqlQuery: sqlQuery.substring(0, 200),
+      });
 
-    const result = await query<MonthlySalary>(sqlQuery, { employeeCode });
+      const result = await query<MonthlySalary>(sqlQuery, { employeeCode });
 
-    if (result.recordset.length === 0) {
-      return null;
+      console.log('[MonthlySalaryModel] getLatestSalary result:', {
+        recordCount: result.recordset.length,
+        hasRecords: result.recordset.length > 0,
+      });
+
+      if (result.recordset.length === 0) {
+        return null;
+      }
+
+      const mapped = this.mapToMonthlySalary(result.recordset[0]);
+      console.log('[MonthlySalaryModel] Mapped latest salary:', {
+        month: mapped.Month,
+        employeeCode: mapped.EmployeeCode,
+      });
+      return mapped;
+    } catch (error) {
+      const err = error as Error;
+      console.error('[MonthlySalaryModel] Error in getLatestSalary:', err.message);
+      console.error('[MonthlySalaryModel] Error stack:', err.stack);
+      throw err;
     }
-
-    return this.mapToMonthlySalary(result.recordset[0]);
   }
 
   /**
@@ -222,7 +269,6 @@ export class MonthlySalaryModel {
     finalizedOnly: boolean = false
   ): Promise<MonthlySalary[]> {
     const statusFilter = finalizedOnly ? 'AND status = 1' : '';
-
     const sqlQuery = `
       SELECT 
         id, employeecode, month, grosssalary, netsalary, basesalary,
@@ -305,7 +351,15 @@ export class MonthlySalaryModel {
    * Map database row to MonthlySalary interface
    */
   private static mapToMonthlySalary(row: any): MonthlySalary {
-    return {
+    console.log('[MonthlySalaryModel] Mapping row to MonthlySalary:', {
+      hasId: !!row.id,
+      hasEmployeeCode: !!row.employeecode,
+      hasMonth: !!row.month,
+      rowKeys: Object.keys(row),
+    });
+    
+    try {
+      const mapped = {
       Id: row.id || row.Id,
       EmployeeCode: row.employeecode || row.EmployeeCode,
       Month: row.month || row.Month,
@@ -329,7 +383,22 @@ export class MonthlySalaryModel {
       ProfessionalTax: row.professionaltax !== null && row.professionaltax !== undefined ? parseFloat(row.professionaltax) : (row.ProfessionalTax !== null && row.ProfessionalTax !== undefined ? parseFloat(row.ProfessionalTax) : null),
       IncentiveAmount: row.incentiveamount !== null && row.incentiveamount !== undefined ? parseFloat(row.incentiveamount) : (row.IncentiveAmount !== null && row.IncentiveAmount !== undefined ? parseFloat(row.IncentiveAmount) : null),
       BreakdownJson: row.breakdownjson || row.BreakdownJson,
-      Status: row.status !== null && row.status !== undefined ? parseInt(row.status) : (row.Status !== null && row.Status !== undefined ? parseInt(row.Status) : 0),
-    };
+      Status: row.status !== null && row.status !== undefined ? (typeof row.status === 'number' ? row.status : parseInt(String(row.status))) : (row.Status !== null && row.Status !== undefined ? (typeof row.Status === 'number' ? row.Status : parseInt(String(row.Status))) : 0),
+      };
+      
+      console.log('[MonthlySalaryModel] Successfully mapped salary:', {
+        Id: mapped.Id,
+        EmployeeCode: mapped.EmployeeCode,
+        Month: mapped.Month,
+        Status: mapped.Status,
+      });
+      
+      return mapped;
+    } catch (error) {
+      const err = error as Error;
+      console.error('[MonthlySalaryModel] Error mapping salary:', err.message);
+      console.error('[MonthlySalaryModel] Row data:', JSON.stringify(row, null, 2));
+      throw err;
+    }
   }
 }

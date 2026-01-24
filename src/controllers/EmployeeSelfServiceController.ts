@@ -150,7 +150,19 @@ export class EmployeeSelfServiceController {
       const employeeCode = req.employeeCode;
       const monthParam = req.query.month as string;
       
+      console.log('[EmployeeSelfService] getSalary called:', {
+        employeeCode,
+        userId: req.userId,
+        monthParam,
+        hasEmployeeCode: !!employeeCode,
+        hasUserId: !!req.userId,
+      });
+      
       if (!employeeCode || !req.userId) {
+        console.error('[EmployeeSelfService] Missing employeeCode or userId:', {
+          employeeCode,
+          userId: req.userId,
+        });
         res.status(401).json({
           success: false,
           error: 'Unauthorized',
@@ -159,8 +171,10 @@ export class EmployeeSelfServiceController {
       }
 
       // Read salary from MonthlySalary table (NO CALCULATION)
+      console.log('[EmployeeSelfService] Importing MonthlySalaryModel...');
       const { MonthlySalaryModel } = await import('../models/MonthlySalaryModel.js');
       const { EmployeeDetailsModel } = await import('../models/EmployeeDetailsModel.js');
+      console.log('[EmployeeSelfService] Models imported successfully');
       
       let salaryRecord: any = null;
       
@@ -168,12 +182,16 @@ export class EmployeeSelfServiceController {
       // Employees must NOT see DRAFT salaries
       // If month is specified, try to get that month's salary (FINALIZED only)
       if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+        console.log('[EmployeeSelfService] Fetching salary for month:', monthParam);
         salaryRecord = await MonthlySalaryModel.getSalary(employeeCode, monthParam, true);
+        console.log('[EmployeeSelfService] Salary record for month:', salaryRecord ? 'Found' : 'Not found');
       }
       
       // If not found and month was specified, or if no month specified, get latest salary (FINALIZED only)
       if (!salaryRecord) {
+        console.log('[EmployeeSelfService] Fetching latest salary...');
         salaryRecord = await MonthlySalaryModel.getLatestSalary(employeeCode, true);
+        console.log('[EmployeeSelfService] Latest salary record:', salaryRecord ? 'Found' : 'Not found');
       }
 
       // Get employee details for base salary and per day rate
@@ -227,6 +245,9 @@ export class EmployeeSelfServiceController {
     } catch (error) {
       const err = error as Error;
       console.error('[EmployeeSelfService] Error getting salary:', err);
+      console.error('[EmployeeSelfService] Error stack:', err.stack);
+      console.error('[EmployeeSelfService] EmployeeCode:', req.employeeCode);
+      console.error('[EmployeeSelfService] UserId:', req.userId);
       res.status(500).json({
         success: false,
         error: 'Internal server error',
