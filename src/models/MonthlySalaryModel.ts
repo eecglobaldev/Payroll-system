@@ -6,8 +6,7 @@
  * Admin portal calculates and saves here, employee portal only reads.
  */
 
-import sql from 'mssql';
-import { getPool } from '../db/pool.js';
+import { query } from '../db/pool.js';
 
 export interface MonthlySalary {
   Id: number;
@@ -64,90 +63,81 @@ export interface CreateMonthlySalaryRequest {
 export class MonthlySalaryModel {
   /**
    * Create or update monthly salary snapshot
-   * Uses MERGE (UPSERT) to handle both insert and update
+   * Uses PostgreSQL INSERT ... ON CONFLICT for upsert
    */
   static async upsertSalary(
     data: CreateMonthlySalaryRequest
   ): Promise<MonthlySalary> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      INSERT INTO monthlysalary (
+        employeecode, month, grosssalary, netsalary, basesalary,
+        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+        isheld, holdreason, calculatedby, status,
+        perdayrate, totalworkedhours, overtimehours, overtimeamount,
+        tdsdeduction, professionaltax, incentiveamount, breakdownjson
+      )
+      VALUES (
+        @employeeCode, @month, @grossSalary, @netSalary, @baseSalary,
+        @paidDays, @absentDays, @leaveDays, @totalDeductions, @totalAdditions,
+        @isHeld, @holdReason, @calculatedBy, @status,
+        @perDayRate, @totalWorkedHours, @overtimeHours, @overtimeAmount,
+        @tdsDeduction, @professionalTax, @incentiveAmount, @breakdownJson
+      )
+      ON CONFLICT (employeecode, month) 
+      DO UPDATE SET
+        grosssalary = EXCLUDED.grosssalary,
+        netsalary = EXCLUDED.netsalary,
+        basesalary = EXCLUDED.basesalary,
+        paiddays = EXCLUDED.paiddays,
+        absentdays = EXCLUDED.absentdays,
+        leavedays = EXCLUDED.leavedays,
+        totaldeductions = EXCLUDED.totaldeductions,
+        totaladditions = EXCLUDED.totaladditions,
+        isheld = EXCLUDED.isheld,
+        holdreason = EXCLUDED.holdreason,
+        calculatedat = CURRENT_TIMESTAMP,
+        calculatedby = EXCLUDED.calculatedby,
+        status = EXCLUDED.status,
+        perdayrate = EXCLUDED.perdayrate,
+        totalworkedhours = EXCLUDED.totalworkedhours,
+        overtimehours = EXCLUDED.overtimehours,
+        overtimeamount = EXCLUDED.overtimeamount,
+        tdsdeduction = EXCLUDED.tdsdeduction,
+        professionaltax = EXCLUDED.professionaltax,
+        incentiveamount = EXCLUDED.incentiveamount,
+        breakdownjson = EXCLUDED.breakdownjson
+      RETURNING 
+        id, employeecode, month, grosssalary, netsalary, basesalary,
+        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+        isheld, holdreason, calculatedat, calculatedby, status,
+        perdayrate, totalworkedhours, overtimehours, overtimeamount,
+        tdsdeduction, professionaltax, incentiveamount, breakdownjson
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), data.employeeCode)
-      .input('Month', sql.NVarChar(7), data.month)
-      .input('GrossSalary', sql.Decimal(10, 2), data.grossSalary)
-      .input('NetSalary', sql.Decimal(10, 2), data.netSalary)
-      .input('BaseSalary', sql.Decimal(10, 2), data.baseSalary)
-      .input('PaidDays', sql.Decimal(4, 2), data.paidDays)
-      .input('AbsentDays', sql.Decimal(4, 2), data.absentDays)
-      .input('LeaveDays', sql.Decimal(4, 2), data.leaveDays)
-      .input('TotalDeductions', sql.Decimal(10, 2), data.totalDeductions)
-      .input('TotalAdditions', sql.Decimal(10, 2), data.totalAdditions)
-      .input('IsHeld', sql.Bit, data.isHeld ? 1 : 0)
-      .input('HoldReason', sql.NVarChar(255), data.holdReason || null)
-      .input('CalculatedBy', sql.NVarChar(50), data.calculatedBy || null)
-      .input('PerDayRate', sql.Decimal(10, 2), data.perDayRate || null)
-      .input('TotalWorkedHours', sql.Decimal(10, 2), data.totalWorkedHours || null)
-      .input('OvertimeHours', sql.Decimal(10, 2), data.overtimeHours || null)
-      .input('OvertimeAmount', sql.Decimal(10, 2), data.overtimeAmount || null)
-      .input('TdsDeduction', sql.Decimal(10, 2), data.tdsDeduction || null)
-      .input('ProfessionalTax', sql.Decimal(10, 2), data.professionalTax || null)
-      .input('IncentiveAmount', sql.Decimal(10, 2), data.incentiveAmount || null)
-      .input('BreakdownJson', sql.NVarChar(sql.MAX), data.breakdownJson || null)
-      .input('Status', sql.TinyInt, data.status !== undefined ? data.status : 0) // Default to 0 (DRAFT)
-      .query<MonthlySalary>(`
-        MERGE dbo.MonthlySalary AS target
-        USING (SELECT @EmployeeCode AS EmployeeCode, @Month AS Month) AS source
-        ON target.EmployeeCode = source.EmployeeCode AND target.Month = source.Month
-        WHEN MATCHED THEN
-          UPDATE SET
-            GrossSalary = @GrossSalary,
-            NetSalary = @NetSalary,
-            BaseSalary = @BaseSalary,
-            PaidDays = @PaidDays,
-            AbsentDays = @AbsentDays,
-            LeaveDays = @LeaveDays,
-            TotalDeductions = @TotalDeductions,
-            TotalAdditions = @TotalAdditions,
-            IsHeld = @IsHeld,
-            HoldReason = @HoldReason,
-            CalculatedAt = GETDATE(),
-            CalculatedBy = @CalculatedBy,
-            Status = @Status,
-            PerDayRate = @PerDayRate,
-            TotalWorkedHours = @TotalWorkedHours,
-            OvertimeHours = @OvertimeHours,
-            OvertimeAmount = @OvertimeAmount,
-            TdsDeduction = @TdsDeduction,
-            ProfessionalTax = @ProfessionalTax,
-            IncentiveAmount = @IncentiveAmount,
-            BreakdownJson = @BreakdownJson
-        WHEN NOT MATCHED THEN
-          INSERT (
-            EmployeeCode, Month, GrossSalary, NetSalary, BaseSalary,
-            PaidDays, AbsentDays, LeaveDays, TotalDeductions, TotalAdditions,
-            IsHeld, HoldReason, CalculatedBy, Status,
-            PerDayRate, TotalWorkedHours, OvertimeHours, OvertimeAmount,
-            TdsDeduction, ProfessionalTax, IncentiveAmount, BreakdownJson
-          )
-          VALUES (
-            @EmployeeCode, @Month, @GrossSalary, @NetSalary, @BaseSalary,
-            @PaidDays, @AbsentDays, @LeaveDays, @TotalDeductions, @TotalAdditions,
-            @IsHeld, @HoldReason, @CalculatedBy, @Status,
-            @PerDayRate, @TotalWorkedHours, @OvertimeHours, @OvertimeAmount,
-            @TdsDeduction, @ProfessionalTax, @IncentiveAmount, @BreakdownJson
-          );
-        
-        SELECT 
-          Id, EmployeeCode, Month, GrossSalary, NetSalary, BaseSalary,
-          PaidDays, AbsentDays, LeaveDays, TotalDeductions, TotalAdditions,
-          IsHeld, HoldReason, CalculatedAt, CalculatedBy, Status,
-          PerDayRate, TotalWorkedHours, OvertimeHours, OvertimeAmount,
-          TdsDeduction, ProfessionalTax, IncentiveAmount, BreakdownJson
-        FROM dbo.MonthlySalary
-        WHERE EmployeeCode = @EmployeeCode AND Month = @Month
-      `);
+    const result = await query<MonthlySalary>(sqlQuery, {
+      employeeCode: data.employeeCode,
+      month: data.month,
+      grossSalary: data.grossSalary,
+      netSalary: data.netSalary,
+      baseSalary: data.baseSalary,
+      paidDays: data.paidDays,
+      absentDays: data.absentDays,
+      leaveDays: data.leaveDays,
+      totalDeductions: data.totalDeductions,
+      totalAdditions: data.totalAdditions,
+      isHeld: data.isHeld,
+      holdReason: data.holdReason || null,
+      calculatedBy: data.calculatedBy || null,
+      status: data.status !== undefined ? data.status : 0,
+      perDayRate: data.perDayRate || null,
+      totalWorkedHours: data.totalWorkedHours || null,
+      overtimeHours: data.overtimeHours || null,
+      overtimeAmount: data.overtimeAmount || null,
+      tdsDeduction: data.tdsDeduction || null,
+      professionalTax: data.professionalTax || null,
+      incentiveAmount: data.incentiveAmount || null,
+      breakdownJson: data.breakdownJson || null,
+    });
 
     if (result.recordset.length === 0) {
       throw new Error('Failed to upsert monthly salary');
@@ -166,25 +156,20 @@ export class MonthlySalaryModel {
     month: string,
     finalizedOnly: boolean = false
   ): Promise<MonthlySalary | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const statusFilter = finalizedOnly ? 'AND status = 1' : '';
 
-    const statusFilter = finalizedOnly ? 'AND Status = 1' : '';
+    const sqlQuery = `
+      SELECT 
+        id, employeecode, month, grosssalary, netsalary, basesalary,
+        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+        isheld, holdreason, calculatedat, calculatedby, status,
+        perdayrate, totalworkedhours, overtimehours, overtimeamount,
+        tdsdeduction, professionaltax, incentiveamount, breakdownjson
+      FROM monthlysalary
+      WHERE employeecode = @employeeCode AND month = @month ${statusFilter}
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Month', sql.NVarChar(7), month)
-      .query<MonthlySalary>(`
-        SELECT 
-          Id, EmployeeCode, Month, GrossSalary, NetSalary, BaseSalary,
-          PaidDays, AbsentDays, LeaveDays, TotalDeductions, TotalAdditions,
-          IsHeld, HoldReason, CalculatedAt, CalculatedBy, Status,
-          PerDayRate, TotalWorkedHours, OvertimeHours, OvertimeAmount,
-          TdsDeduction, ProfessionalTax, IncentiveAmount, BreakdownJson
-        FROM dbo.MonthlySalary
-        WHERE EmployeeCode = @EmployeeCode AND Month = @Month ${statusFilter}
-      `);
+    const result = await query<MonthlySalary>(sqlQuery, { employeeCode, month });
 
     if (result.recordset.length === 0) {
       return null;
@@ -202,25 +187,22 @@ export class MonthlySalaryModel {
     employeeCode: string,
     finalizedOnly: boolean = false
   ): Promise<MonthlySalary | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const statusFilter = finalizedOnly ? 'AND status = 1' : '';
 
-    const statusFilter = finalizedOnly ? 'AND Status = 1' : '';
+    const sqlQuery = `
+      SELECT 
+        id, employeecode, month, grosssalary, netsalary, basesalary,
+        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+        isheld, holdreason, calculatedat, calculatedby, status,
+        perdayrate, totalworkedhours, overtimehours, overtimeamount,
+        tdsdeduction, professionaltax, incentiveamount, breakdownjson
+      FROM monthlysalary
+      WHERE employeecode = @employeeCode ${statusFilter}
+      ORDER BY month DESC
+      LIMIT 1
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .query<MonthlySalary>(`
-        SELECT TOP 1
-          Id, EmployeeCode, Month, GrossSalary, NetSalary, BaseSalary,
-          PaidDays, AbsentDays, LeaveDays, TotalDeductions, TotalAdditions,
-          IsHeld, HoldReason, CalculatedAt, CalculatedBy, Status,
-          PerDayRate, TotalWorkedHours, OvertimeHours, OvertimeAmount,
-          TdsDeduction, ProfessionalTax, IncentiveAmount, BreakdownJson
-        FROM dbo.MonthlySalary
-        WHERE EmployeeCode = @EmployeeCode ${statusFilter}
-        ORDER BY Month DESC
-      `);
+    const result = await query<MonthlySalary>(sqlQuery, { employeeCode });
 
     if (result.recordset.length === 0) {
       return null;
@@ -239,27 +221,22 @@ export class MonthlySalaryModel {
     limit: number = 12,
     finalizedOnly: boolean = false
   ): Promise<MonthlySalary[]> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const statusFilter = finalizedOnly ? 'AND status = 1' : '';
 
-    const statusFilter = finalizedOnly ? 'AND Status = 1' : '';
+    const sqlQuery = `
+      SELECT 
+        id, employeecode, month, grosssalary, netsalary, basesalary,
+        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+        isheld, holdreason, calculatedat, calculatedby, status,
+        perdayrate, totalworkedhours, overtimehours, overtimeamount,
+        tdsdeduction, professionaltax, incentiveamount, breakdownjson
+      FROM monthlysalary
+      WHERE employeecode = @employeeCode ${statusFilter}
+      ORDER BY month DESC
+      LIMIT @limit
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Limit', sql.Int, limit)
-      .query<MonthlySalary>(`
-        SELECT TOP (@Limit)
-          Id, EmployeeCode, Month, GrossSalary, NetSalary, BaseSalary,
-          PaidDays, AbsentDays, LeaveDays, TotalDeductions, TotalAdditions,
-          IsHeld, HoldReason, CalculatedAt, CalculatedBy, Status,
-          PerDayRate, TotalWorkedHours, OvertimeHours, OvertimeAmount,
-          TdsDeduction, ProfessionalTax, IncentiveAmount, BreakdownJson
-        FROM dbo.MonthlySalary
-        WHERE EmployeeCode = @EmployeeCode ${statusFilter}
-        ORDER BY Month DESC
-      `);
-
+    const result = await query<MonthlySalary>(sqlQuery, { employeeCode, limit });
     return result.recordset.map(row => this.mapToMonthlySalary(row));
   }
 
@@ -273,32 +250,27 @@ export class MonthlySalaryModel {
     month: string,
     calculatedBy: string
   ): Promise<MonthlySalary | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      UPDATE monthlysalary
+      SET status = 1,
+          calculatedat = CURRENT_TIMESTAMP,
+          calculatedby = @calculatedBy
+      WHERE employeecode = @employeeCode 
+        AND month = @month 
+        AND status = 0
+      RETURNING 
+        id, employeecode, month, grosssalary, netsalary, basesalary,
+        paiddays, absentdays, leavedays, totaldeductions, totaladditions,
+        isheld, holdreason, calculatedat, calculatedby, status,
+        perdayrate, totalworkedhours, overtimehours, overtimeamount,
+        tdsdeduction, professionaltax, incentiveamount, breakdownjson
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Month', sql.NVarChar(7), month)
-      .input('CalculatedBy', sql.NVarChar(50), calculatedBy)
-      .query<MonthlySalary>(`
-        UPDATE dbo.MonthlySalary
-        SET Status = 1,
-            CalculatedAt = GETDATE(),
-            CalculatedBy = @CalculatedBy
-        WHERE EmployeeCode = @EmployeeCode 
-          AND Month = @Month 
-          AND Status = 0;
-        
-        SELECT 
-          Id, EmployeeCode, Month, GrossSalary, NetSalary, BaseSalary,
-          PaidDays, AbsentDays, LeaveDays, TotalDeductions, TotalAdditions,
-          IsHeld, HoldReason, CalculatedAt, CalculatedBy, Status,
-          PerDayRate, TotalWorkedHours, OvertimeHours, OvertimeAmount,
-          TdsDeduction, ProfessionalTax, IncentiveAmount, BreakdownJson
-        FROM dbo.MonthlySalary
-        WHERE EmployeeCode = @EmployeeCode AND Month = @Month
-      `);
+    const result = await query<MonthlySalary>(sqlQuery, {
+      employeeCode,
+      month,
+      calculatedBy,
+    });
 
     if (result.recordset.length === 0) {
       return null;
@@ -315,25 +287,17 @@ export class MonthlySalaryModel {
     month: string,
     calculatedBy: string
   ): Promise<{ updated: number }> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      UPDATE monthlysalary
+      SET status = 1,
+          calculatedat = CURRENT_TIMESTAMP,
+          calculatedby = @calculatedBy
+      WHERE month = @month 
+        AND status = 0
+    `;
 
-    const result = await pool
-      .request()
-      .input('Month', sql.NVarChar(7), month)
-      .input('CalculatedBy', sql.NVarChar(50), calculatedBy)
-      .query<{ rowsAffected: number }>(`
-        UPDATE dbo.MonthlySalary
-        SET Status = 1,
-            CalculatedAt = GETDATE(),
-            CalculatedBy = @CalculatedBy
-        WHERE Month = @Month 
-          AND Status = 0;
-        
-        SELECT @@ROWCOUNT AS rowsAffected;
-      `);
-
-    const rowsAffected = result.recordset[0]?.rowsAffected || 0;
+    const result = await query(sqlQuery, { month, calculatedBy });
+    const rowsAffected = result.rowsAffected[0] || 0;
     return { updated: rowsAffected };
   }
 
@@ -342,31 +306,30 @@ export class MonthlySalaryModel {
    */
   private static mapToMonthlySalary(row: any): MonthlySalary {
     return {
-      Id: row.Id,
-      EmployeeCode: row.EmployeeCode,
-      Month: row.Month,
-      GrossSalary: row.GrossSalary !== null ? parseFloat(row.GrossSalary) : null,
-      NetSalary: row.NetSalary !== null ? parseFloat(row.NetSalary) : null,
-      BaseSalary: row.BaseSalary !== null ? parseFloat(row.BaseSalary) : null,
-      PaidDays: row.PaidDays !== null ? parseFloat(row.PaidDays) : null,
-      AbsentDays: row.AbsentDays !== null ? parseFloat(row.AbsentDays) : null,
-      LeaveDays: row.LeaveDays !== null ? parseFloat(row.LeaveDays) : null,
-      TotalDeductions: row.TotalDeductions !== null ? parseFloat(row.TotalDeductions) : null,
-      TotalAdditions: row.TotalAdditions !== null ? parseFloat(row.TotalAdditions) : null,
-      IsHeld: row.IsHeld === true || row.IsHeld === 1,
-      HoldReason: row.HoldReason,
-      CalculatedAt: row.CalculatedAt,
-      CalculatedBy: row.CalculatedBy,
-      PerDayRate: row.PerDayRate !== null ? parseFloat(row.PerDayRate) : null,
-      TotalWorkedHours: row.TotalWorkedHours !== null ? parseFloat(row.TotalWorkedHours) : null,
-      OvertimeHours: row.OvertimeHours !== null ? parseFloat(row.OvertimeHours) : null,
-      OvertimeAmount: row.OvertimeAmount !== null ? parseFloat(row.OvertimeAmount) : null,
-      TdsDeduction: row.TdsDeduction !== null ? parseFloat(row.TdsDeduction) : null,
-      ProfessionalTax: row.ProfessionalTax !== null ? parseFloat(row.ProfessionalTax) : null,
-      IncentiveAmount: row.IncentiveAmount !== null ? parseFloat(row.IncentiveAmount) : null,
-      BreakdownJson: row.BreakdownJson,
-      Status: row.Status !== null && row.Status !== undefined ? parseInt(row.Status) : 0,
+      Id: row.id || row.Id,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      Month: row.month || row.Month,
+      GrossSalary: row.grosssalary !== null && row.grosssalary !== undefined ? parseFloat(row.grosssalary) : (row.GrossSalary !== null && row.GrossSalary !== undefined ? parseFloat(row.GrossSalary) : null),
+      NetSalary: row.netsalary !== null && row.netsalary !== undefined ? parseFloat(row.netsalary) : (row.NetSalary !== null && row.NetSalary !== undefined ? parseFloat(row.NetSalary) : null),
+      BaseSalary: row.basesalary !== null && row.basesalary !== undefined ? parseFloat(row.basesalary) : (row.BaseSalary !== null && row.BaseSalary !== undefined ? parseFloat(row.BaseSalary) : null),
+      PaidDays: row.paiddays !== null && row.paiddays !== undefined ? parseFloat(row.paiddays) : (row.PaidDays !== null && row.PaidDays !== undefined ? parseFloat(row.PaidDays) : null),
+      AbsentDays: row.absentdays !== null && row.absentdays !== undefined ? parseFloat(row.absentdays) : (row.AbsentDays !== null && row.AbsentDays !== undefined ? parseFloat(row.AbsentDays) : null),
+      LeaveDays: row.leavedays !== null && row.leavedays !== undefined ? parseFloat(row.leavedays) : (row.LeaveDays !== null && row.LeaveDays !== undefined ? parseFloat(row.LeaveDays) : null),
+      TotalDeductions: row.totaldeductions !== null && row.totaldeductions !== undefined ? parseFloat(row.totaldeductions) : (row.TotalDeductions !== null && row.TotalDeductions !== undefined ? parseFloat(row.TotalDeductions) : null),
+      TotalAdditions: row.totaladditions !== null && row.totaladditions !== undefined ? parseFloat(row.totaladditions) : (row.TotalAdditions !== null && row.TotalAdditions !== undefined ? parseFloat(row.TotalAdditions) : null),
+      IsHeld: row.isheld === true || row.isheld === 1 || row.IsHeld === true || row.IsHeld === 1,
+      HoldReason: row.holdreason || row.HoldReason,
+      CalculatedAt: row.calculatedat || row.CalculatedAt,
+      CalculatedBy: row.calculatedby || row.CalculatedBy,
+      PerDayRate: row.perdayrate !== null && row.perdayrate !== undefined ? parseFloat(row.perdayrate) : (row.PerDayRate !== null && row.PerDayRate !== undefined ? parseFloat(row.PerDayRate) : null),
+      TotalWorkedHours: row.totalworkedhours !== null && row.totalworkedhours !== undefined ? parseFloat(row.totalworkedhours) : (row.TotalWorkedHours !== null && row.TotalWorkedHours !== undefined ? parseFloat(row.TotalWorkedHours) : null),
+      OvertimeHours: row.overtimehours !== null && row.overtimehours !== undefined ? parseFloat(row.overtimehours) : (row.OvertimeHours !== null && row.OvertimeHours !== undefined ? parseFloat(row.OvertimeHours) : null),
+      OvertimeAmount: row.overtimeamount !== null && row.overtimeamount !== undefined ? parseFloat(row.overtimeamount) : (row.OvertimeAmount !== null && row.OvertimeAmount !== undefined ? parseFloat(row.OvertimeAmount) : null),
+      TdsDeduction: row.tdsdeduction !== null && row.tdsdeduction !== undefined ? parseFloat(row.tdsdeduction) : (row.TdsDeduction !== null && row.TdsDeduction !== undefined ? parseFloat(row.TdsDeduction) : null),
+      ProfessionalTax: row.professionaltax !== null && row.professionaltax !== undefined ? parseFloat(row.professionaltax) : (row.ProfessionalTax !== null && row.ProfessionalTax !== undefined ? parseFloat(row.ProfessionalTax) : null),
+      IncentiveAmount: row.incentiveamount !== null && row.incentiveamount !== undefined ? parseFloat(row.incentiveamount) : (row.IncentiveAmount !== null && row.IncentiveAmount !== undefined ? parseFloat(row.IncentiveAmount) : null),
+      BreakdownJson: row.breakdownjson || row.BreakdownJson,
+      Status: row.status !== null && row.status !== undefined ? parseInt(row.status) : (row.Status !== null && row.Status !== undefined ? parseInt(row.Status) : 0),
     };
   }
 }
-

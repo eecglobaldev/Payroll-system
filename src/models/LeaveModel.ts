@@ -7,8 +7,7 @@
  * - MonthlyLeaveUsage: Month-by-month leave approvals (persists across sessions)
  */
 
-import sql from 'mssql';
-import { getPool } from '../db/pool.js';
+import { query, executeProcedure } from '../db/pool.js';
 import {
   EmployeeLeaveEntitlement,
   MonthlyLeaveUsage,
@@ -25,27 +24,21 @@ export class LeaveModel {
     employeeCode: string,
     year: number
   ): Promise<EmployeeLeaveEntitlement | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      SELECT 
+        employeeleavesid,
+        employeecode,
+        leavetypeid,
+        leaveyear,
+        allowedleaves,
+        COALESCE(usedpaidleaves, 0) AS usedpaidleaves,
+        COALESCE(usedcasualleaves, 0) AS usedcasualleaves
+      FROM employeeleaves
+      WHERE employeecode = @employeeCode 
+        AND leaveyear = @leaveYear
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('LeaveYear', sql.Int, year)
-      .query<EmployeeLeaveEntitlement>(`
-        SELECT 
-          EmployeeLeavesId,
-          EmployeeCode,
-          LeaveTypeId,
-          LeaveYear,
-          AllowedLeaves,
-          ISNULL(UsedPaidLeaves, 0) AS UsedPaidLeaves,
-          ISNULL(UsedCasualLeaves, 0) AS UsedCasualLeaves
-        FROM dbo.EmployeeLeaves
-        WHERE EmployeeCode = @EmployeeCode 
-          AND LeaveYear = @LeaveYear
-      `);
-
+    const result = await query<EmployeeLeaveEntitlement>(sqlQuery, { employeeCode, leaveYear: year });
     return result.recordset.length > 0 ? result.recordset[0] : null;
   }
 
@@ -57,30 +50,24 @@ export class LeaveModel {
     employeeCode: string,
     month: string
   ): Promise<MonthlyLeaveUsage | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      SELECT 
+        monthlyleaveusageid,
+        employeecode,
+        leavemonth,
+        paidleavedaysused,
+        casualleavedaysused,
+        paidleavedates,
+        casualleavedates,
+        createdat,
+        updatedat,
+        updatedby
+      FROM monthlyleaveusage
+      WHERE employeecode = @employeeCode 
+        AND leavemonth = @leaveMonth
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('LeaveMonth', sql.VarChar(7), month)
-      .query<MonthlyLeaveUsage>(`
-        SELECT 
-          MonthlyLeaveUsageId,
-          EmployeeCode,
-          LeaveMonth,
-          PaidLeaveDaysUsed,
-          CasualLeaveDaysUsed,
-          PaidLeaveDates,
-          CasualLeaveDates,
-          CreatedAt,
-          UpdatedAt,
-          UpdatedBy
-        FROM dbo.MonthlyLeaveUsage
-        WHERE EmployeeCode = @EmployeeCode 
-          AND LeaveMonth = @LeaveMonth
-      `);
-
+    const result = await query<MonthlyLeaveUsage>(sqlQuery, { employeeCode, leaveMonth: month });
     return result.recordset.length > 0 ? result.recordset[0] : null;
   }
 
@@ -131,15 +118,12 @@ export class LeaveModel {
 
   /**
    * Save or update monthly leave usage (idempotent operation)
-   * Uses stored procedure for atomic upsert
+   * Uses stored procedure if available, otherwise direct SQL upsert
    * Now stores dates as JSON with explicit values (0.5 or 1.0)
    */
   static async upsertMonthlyLeaveUsage(
     data: SaveLeaveApprovalRequest
   ): Promise<{ operation: string; record: MonthlyLeaveUsage }> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     // Calculate sums based on explicit values
     const paidLeaveDaysUsed = data.paidLeaveDates.reduce((sum, item) => sum + item.value, 0);
     const casualLeaveDaysUsed = data.casualLeaveDates.reduce((sum, item) => sum + item.value, 0);
@@ -152,30 +136,98 @@ export class LeaveModel {
       ? this.stringifyLeaveDates(data.casualLeaveDates)
       : null;
 
-    // Execute stored procedure
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), data.employeeCode)
-      .input('LeaveMonth', sql.VarChar(7), data.month)
-      .input('PaidLeaveDaysUsed', sql.Decimal(10, 2), paidLeaveDaysUsed) // Changed to Decimal to support 0.5
-      .input('CasualLeaveDaysUsed', sql.Decimal(10, 2), casualLeaveDaysUsed) // Changed to Decimal to support 0.5
-      .input('PaidLeaveDates', sql.VarChar(500), paidLeaveDatesStr)
-      .input('CasualLeaveDates', sql.VarChar(500), casualLeaveDatesStr)
-      .input('UpdatedBy', sql.VarChar(100), data.approvedBy || null)
-      .execute('dbo.UpsertMonthlyLeaveUsage');
+    // Try to use stored procedure first
+    try {
+      const result = await executeProcedure<{ Operation: string }>('upsertmonthlyleaveusage', {
+        employeeCode: data.employeeCode,
+        leaveMonth: data.month,
+        paidLeaveDaysUsed,
+        casualLeaveDaysUsed,
+        paidLeaveDates: paidLeaveDatesStr,
+        casualLeaveDates: casualLeaveDatesStr,
+        updatedBy: data.approvedBy || null,
+      });
 
-    const operation = result.recordset[0]?.Operation || 'UNKNOWN';
+      const operation = result.recordset[0]?.Operation || 'UNKNOWN';
 
-    // Fetch the saved record
-    const savedRecord = await this.getMonthlyLeaveUsage(data.employeeCode, data.month);
+      // Fetch the saved record
+      const savedRecord = await this.getMonthlyLeaveUsage(data.employeeCode, data.month);
 
-    if (!savedRecord) {
-      throw new Error('Failed to retrieve saved leave usage record');
+      if (!savedRecord) {
+        throw new Error('Failed to retrieve saved leave usage record');
+      }
+
+      return {
+        operation,
+        record: savedRecord,
+      };
+    } catch (error: any) {
+      // If stored procedure doesn't exist, use direct SQL upsert
+      if (error.message?.includes('function') || error.message?.includes('does not exist')) {
+        console.warn('[LeaveModel] Stored procedure not found, using direct SQL upsert');
+        return await this.upsertMonthlyLeaveUsageDirect(data, paidLeaveDaysUsed, casualLeaveDaysUsed, paidLeaveDatesStr, casualLeaveDatesStr);
+      }
+      throw error;
     }
+  }
+
+  /**
+   * Direct SQL upsert (fallback if stored procedure doesn't exist)
+   */
+  private static async upsertMonthlyLeaveUsageDirect(
+    data: SaveLeaveApprovalRequest,
+    paidLeaveDaysUsed: number,
+    casualLeaveDaysUsed: number,
+    paidLeaveDatesStr: string | null,
+    casualLeaveDatesStr: string | null
+  ): Promise<{ operation: string; record: MonthlyLeaveUsage }> {
+    const sqlQuery = `
+      INSERT INTO monthlyleaveusage 
+        (employeecode, leavemonth, paidleavedaysused, casualleavedaysused, paidleavedates, casualleavedates, updatedby)
+      VALUES 
+        (@employeeCode, @leaveMonth, @paidLeaveDaysUsed, @casualLeaveDaysUsed, @paidLeaveDates, @casualLeaveDates, @updatedBy)
+      ON CONFLICT (employeecode, leavemonth) 
+      DO UPDATE SET
+        paidleavedaysused = EXCLUDED.paidleavedaysused,
+        casualleavedaysused = EXCLUDED.casualleavedaysused,
+        paidleavedates = EXCLUDED.paidleavedates,
+        casualleavedates = EXCLUDED.casualleavedates,
+        updatedat = CURRENT_TIMESTAMP,
+        updatedby = EXCLUDED.updatedby
+      RETURNING 
+        monthlyleaveusageid,
+        employeecode,
+        leavemonth,
+        paidleavedaysused,
+        casualleavedaysused,
+        paidleavedates,
+        casualleavedates,
+        createdat,
+        updatedat,
+        updatedby
+    `;
+
+    const result = await query<MonthlyLeaveUsage>(sqlQuery, {
+      employeeCode: data.employeeCode,
+      leaveMonth: data.month,
+      paidLeaveDaysUsed,
+      casualLeaveDaysUsed,
+      paidLeaveDates: paidLeaveDatesStr,
+      casualLeaveDates: casualLeaveDatesStr,
+      updatedBy: data.approvedBy || null,
+    });
+
+    if (result.recordset.length === 0) {
+      throw new Error('Failed to upsert monthly leave usage');
+    }
+
+    // Determine operation type
+    const existing = await this.getMonthlyLeaveUsage(data.employeeCode, data.month);
+    const operation = existing ? 'updated' : 'created';
 
     return {
       operation,
-      record: savedRecord,
+      record: result.recordset[0],
     };
   }
 
@@ -189,22 +241,20 @@ export class LeaveModel {
     usedPaidLeaves: number,
     usedCasualLeaves: number
   ): Promise<void> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      UPDATE employeeleaves
+      SET usedpaidleaves = @usedPaidLeaves,
+          usedcasualleaves = @usedCasualLeaves
+      WHERE employeecode = @employeeCode 
+        AND leaveyear = @leaveYear
+    `;
 
-    await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('LeaveYear', sql.Int, year)
-      .input('UsedPaidLeaves', sql.Int, usedPaidLeaves)
-      .input('UsedCasualLeaves', sql.Decimal(5, 2), usedCasualLeaves) // Changed to Decimal to support 0.5
-      .query(`
-        UPDATE dbo.EmployeeLeaves
-        SET UsedPaidLeaves = @UsedPaidLeaves,
-            UsedCasualLeaves = @UsedCasualLeaves
-        WHERE EmployeeCode = @EmployeeCode 
-          AND LeaveYear = @LeaveYear
-      `);
+    await query(sqlQuery, {
+      employeeCode,
+      leaveYear: year,
+      usedPaidLeaves,
+      usedCasualLeaves,
+    });
   }
 
   /**
@@ -215,30 +265,28 @@ export class LeaveModel {
     employeeCode: string,
     year: number
   ): Promise<MonthlyLeaveUsage[]> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      SELECT 
+        monthlyleaveusageid,
+        employeecode,
+        leavemonth,
+        paidleavedaysused,
+        casualleavedaysused,
+        paidleavedates,
+        casualleavedates,
+        createdat,
+        updatedat,
+        updatedby
+      FROM monthlyleaveusage
+      WHERE employeecode = @employeeCode 
+        AND leavemonth LIKE @yearPattern
+      ORDER BY leavemonth ASC
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('YearPattern', sql.VarChar(7), `${year}-%`)
-      .query<MonthlyLeaveUsage>(`
-        SELECT 
-          MonthlyLeaveUsageId,
-          EmployeeCode,
-          LeaveMonth,
-          PaidLeaveDaysUsed,
-          CasualLeaveDaysUsed,
-          PaidLeaveDates,
-          CasualLeaveDates,
-          CreatedAt,
-          UpdatedAt,
-          UpdatedBy
-        FROM dbo.MonthlyLeaveUsage
-        WHERE EmployeeCode = @EmployeeCode 
-          AND LeaveMonth LIKE @YearPattern
-        ORDER BY LeaveMonth ASC
-      `);
+    const result = await query<MonthlyLeaveUsage>(sqlQuery, {
+      employeeCode,
+      yearPattern: `${year}-%`,
+    });
 
     return result.recordset;
   }
@@ -250,20 +298,13 @@ export class LeaveModel {
     employeeCode: string,
     month: string
   ): Promise<boolean> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      DELETE FROM monthlyleaveusage
+      WHERE employeecode = @employeeCode 
+        AND leavemonth = @leaveMonth
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('LeaveMonth', sql.VarChar(7), month)
-      .query(`
-        DELETE FROM dbo.MonthlyLeaveUsage
-        WHERE EmployeeCode = @EmployeeCode 
-          AND LeaveMonth = @LeaveMonth
-      `);
-
+    const result = await query(sqlQuery, { employeeCode, leaveMonth: month });
     return result.rowsAffected[0] > 0;
   }
 }
-

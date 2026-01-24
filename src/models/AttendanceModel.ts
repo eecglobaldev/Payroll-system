@@ -14,9 +14,10 @@ export class AttendanceModel {
   static async getLatest(limit: number = 100): Promise<AttendanceLog[]> {
     const tableName = getCurrentDeviceLogsTable();
     const sqlQuery = `
-      SELECT TOP (@limit) *
+      SELECT *
       FROM ${tableName}
-      ORDER BY LogDate ASC
+      ORDER BY logdate ASC
+      LIMIT @limit
     `;
 
     const result = await query<AttendanceLog>(sqlQuery, { limit });
@@ -31,8 +32,8 @@ export class AttendanceModel {
     const sqlQuery = `
       SELECT *
       FROM ${tableName}
-      WHERE CONVERT(date, LogDate) = @date
-      ORDER BY LogDate
+      WHERE DATE(logdate) = @date
+      ORDER BY logdate
     `;
 
     const result = await query<AttendanceLog>(sqlQuery, { date });
@@ -55,14 +56,14 @@ export class AttendanceModel {
         .map(table => `
           SELECT *
           FROM ${table}
-          WHERE UserId = @userId
-            AND CONVERT(date, LogDate) BETWEEN @start AND @end
+          WHERE userid = @userId
+            AND DATE(logdate) BETWEEN @start AND @end
         `)
         .join(' UNION ALL ');
       
       const sqlQuery = `
         ${unionQuery}
-        ORDER BY LogDate
+        ORDER BY logdate
       `;
       
       const result = await query<AttendanceLog>(sqlQuery, { userId, start, end });
@@ -73,9 +74,9 @@ export class AttendanceModel {
     const sqlQuery = `
       SELECT *
       FROM ${tables[0]}
-      WHERE UserId = @userId
-        AND CONVERT(date, LogDate) BETWEEN @start AND @end
-      ORDER BY LogDate
+      WHERE userid = @userId
+        AND DATE(logdate) BETWEEN @start AND @end
+      ORDER BY logdate
     `;
 
     const result = await query<AttendanceLog>(sqlQuery, { userId, start, end });
@@ -100,20 +101,20 @@ export class AttendanceModel {
             UserId,
             LogDate
           FROM ${table}
-          WHERE UserId = @userId
-            AND CONVERT(date, LogDate) BETWEEN @start AND @end
+          WHERE userid = @userId
+            AND DATE(logdate) BETWEEN @start AND @end
         `)
         .join(' UNION ALL ');
       
       const sqlQuery = `
         SELECT 
           UserId,
-          COUNT(DISTINCT CONVERT(date, LogDate)) as DaysPresent,
+          COUNT(DISTINCT DATE(logdate)) as DaysPresent,
           COUNT(*) as TotalLogs,
-          MIN(LogDate) as FirstEntry,
-          MAX(LogDate) as LastEntry
+          MIN(logdate) as FirstEntry,
+          MAX(logdate) as LastEntry
         FROM (${unionQuery}) AS CombinedLogs
-        GROUP BY UserId
+        GROUP BY userid
       `;
       
       const result = await query<AttendanceSummary>(sqlQuery, { userId, start, end });
@@ -124,13 +125,13 @@ export class AttendanceModel {
     const sqlQuery = `
       SELECT 
         UserId,
-        COUNT(DISTINCT CONVERT(date, LogDate)) as DaysPresent,
+          COUNT(DISTINCT DATE(logdate)) as DaysPresent,
         COUNT(*) as TotalLogs,
         MIN(LogDate) as FirstEntry,
         MAX(LogDate) as LastEntry
       FROM ${tables[0]}
       WHERE UserId = @userId
-        AND CONVERT(date, LogDate) BETWEEN @start AND @end
+            AND DATE(logdate) BETWEEN @start AND @end
       GROUP BY UserId
     `;
 
@@ -150,8 +151,8 @@ export class AttendanceModel {
       SELECT *
       FROM ${tableName}
       WHERE UserId = @userId
-        AND CONVERT(date, LogDate) = @date
-      ORDER BY LogDate
+        AND DATE(logdate) = @date
+      ORDER BY logdate
     `;
 
     const result = await query<AttendanceLog>(sqlQuery, { userId, date });
@@ -164,10 +165,11 @@ export class AttendanceModel {
   static async getByUserId(userId: number, limit: number = 100): Promise<AttendanceLog[]> {
     const tableName = getCurrentDeviceLogsTable();
     const sqlQuery = `
-      SELECT TOP (@limit) *
+      SELECT *
       FROM ${tableName}
-      WHERE UserId = @userId
-      ORDER BY LogDate DESC
+      WHERE userid = @userId
+      ORDER BY logdate DESC
+      LIMIT @limit
     `;
 
     const result = await query<AttendanceLog>(sqlQuery, { userId, limit });

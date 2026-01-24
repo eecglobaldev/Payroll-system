@@ -13,18 +13,18 @@ export class EmployeeModel {
   static async getByCode(employeeCode: string): Promise<Employee | null> {
     const sqlQuery = `
       SELECT 
-        EmployeeId,
-        EmployeeCode,
-        EmployeeName,
-        StringCode,
-        NumericCode,
-        Gender,
-        CompanyId,
-        DepartmentId,
-        Designation,
-        CategoryId
-      FROM dbo.Employees
-      WHERE EmployeeCode = @employeeCode
+        employeeid,
+        employeecode,
+        employeename,
+        stringcode,
+        numericcode,
+        gender,
+        companyid,
+        departmentid,
+        designation,
+        categoryid
+      FROM employees
+      WHERE employeecode = @employeeCode
     `;
 
     const result = await query<Employee>(sqlQuery, { employeeCode });
@@ -37,9 +37,9 @@ export class EmployeeModel {
   static async getSalaryInfo(employeeCode: string): Promise<BaseSalaryInfo> {
     try {
       const sqlQuery = `
-        SELECT BaseSalary, HourlyRate
-        FROM dbo.Employees
-        WHERE EmployeeCode = @employeeCode
+        SELECT basesalary, hourlyrate
+        FROM employees
+        WHERE employeecode = @employeeCode
       `;
 
       const result = await query<{ BaseSalary: number; HourlyRate: number | null }>(
@@ -48,9 +48,10 @@ export class EmployeeModel {
       );
 
       if (result.recordset.length > 0) {
+        const row: any = result.recordset[0];
         return {
-          baseSalary: result.recordset[0].BaseSalary || 50000,
-          hourlyRate: result.recordset[0].HourlyRate || null,
+          baseSalary: row.basesalary || row.BaseSalary || 50000,
+          hourlyRate: row.hourlyrate || row.HourlyRate || null,
         };
       }
     } catch (err) {
@@ -71,18 +72,18 @@ export class EmployeeModel {
   static async getAllActive(): Promise<Employee[]> {
     const sqlQuery = `
       SELECT 
-        EmployeeId,
-        EmployeeCode,
-        EmployeeName,
-        StringCode,
-        NumericCode,
-        Gender,
-        CompanyId,
-        DepartmentId,
-        Designation,
-        CategoryId
-      FROM dbo.Employees
-      ORDER BY EmployeeCode
+        employeeid,
+        employeecode,
+        employeename,
+        stringcode,
+        numericcode,
+        gender,
+        companyid,
+        departmentid,
+        designation,
+        categoryid
+      FROM employees
+      ORDER BY employeecode
     `;
 
     const result = await query<Employee>(sqlQuery);
@@ -95,19 +96,19 @@ export class EmployeeModel {
   static async getByDepartment(department: string): Promise<Employee[]> {
     const sqlQuery = `
       SELECT 
-        EmployeeId,
-        EmployeeCode,
-        EmployeeName,
-        StringCode,
-        NumericCode,
-        Gender,
-        CompanyId,
-        DepartmentId,
-        Designation,
-        CategoryId
-      FROM dbo.Employees
-      WHERE DepartmentId = @department
-      ORDER BY EmployeeCode
+        employeeid,
+        employeecode,
+        employeename,
+        stringcode,
+        numericcode,
+        gender,
+        companyid,
+        departmentid,
+        designation,
+        categoryid
+      FROM employees
+      WHERE departmentid = @department
+      ORDER BY employeecode
     `;
 
     const result = await query<Employee>(sqlQuery, { department });
@@ -120,12 +121,13 @@ export class EmployeeModel {
   static async exists(employeeCode: string): Promise<boolean> {
     const sqlQuery = `
       SELECT COUNT(*) as Count
-      FROM dbo.Employees
-      WHERE EmployeeCode = @employeeCode
+      FROM employees
+      WHERE employeecode = @employeeCode
     `;
 
     const result = await query<{ Count: number }>(sqlQuery, { employeeCode });
-    return result.recordset[0].Count > 0;
+    const row: any = result.recordset[0];
+    return (row.count || row.Count || 0) > 0;
   }
 
   /**
@@ -133,7 +135,7 @@ export class EmployeeModel {
    */
   static async create(employee: Omit<Employee, 'CreatedAt' | 'UpdatedAt'>): Promise<void> {
     const sqlQuery = `
-      INSERT INTO dbo.Employees 
+      INSERT INTO employees 
         (EmployeeCode, FullName, Department, Designation, BaseSalary, HourlyRate, JoinDate, IsActive, Email, PhoneNumber)
       VALUES 
         (@EmployeeCode, @FullName, @Department, @Designation, @BaseSalary, @HourlyRate, @JoinDate, @IsActive, @Email, @PhoneNumber)
@@ -152,9 +154,9 @@ export class EmployeeModel {
       .join(', ');
 
     const sqlQuery = `
-      UPDATE dbo.Employees
-      SET ${fields}, UpdatedAt = GETDATE()
-      WHERE EmployeeCode = @employeeCode
+      UPDATE employees
+      SET ${fields}, updatedat = CURRENT_TIMESTAMP
+      WHERE employeecode = @employeeCode
     `;
 
     await query(sqlQuery, { employeeCode, ...updates });
@@ -165,9 +167,9 @@ export class EmployeeModel {
    */
   static async deactivate(employeeCode: string): Promise<void> {
     const sqlQuery = `
-      UPDATE dbo.Employees
-      SET IsActive = 0, UpdatedAt = GETDATE()
-      WHERE EmployeeCode = @employeeCode
+      UPDATE employees
+      SET isactive = 0, updatedat = CURRENT_TIMESTAMP
+      WHERE employeecode = @employeeCode
     `;
 
     await query(sqlQuery, { employeeCode });

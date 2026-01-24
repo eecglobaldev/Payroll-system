@@ -6,8 +6,7 @@
  * - SalaryHold: Stores manual and automatic salary holds
  */
 
-import sql from 'mssql';
-import { getPool } from '../db/pool.js';
+import { query } from '../db/pool.js';
 
 export interface SalaryHold {
   Id: number;
@@ -37,9 +36,6 @@ export class SalaryHoldModel {
   static async createHold(
     data: CreateSalaryHoldRequest
   ): Promise<SalaryHold> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     // Validate hold type
     if (data.holdType !== 'MANUAL' && data.holdType !== 'AUTO') {
       throw new Error('HoldType must be MANUAL or AUTO');
@@ -52,32 +48,30 @@ export class SalaryHoldModel {
     }
 
     // If existing hold is released, we can create a new one
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), data.employeeCode)
-      .input('Month', sql.NVarChar(7), data.month)
-      .input('HoldType', sql.NVarChar(20), data.holdType)
-      .input('Reason', sql.NVarChar(255), data.reason || null)
-      .input('ActionBy', sql.NVarChar(50), data.actionBy || null)
-      .query<SalaryHold>(`
-        INSERT INTO dbo.SalaryHold 
-          (EmployeeCode, Month, HoldType, Reason, ActionBy, IsReleased)
-        VALUES 
-          (@EmployeeCode, @Month, @HoldType, @Reason, @ActionBy, 0)
-        
-        SELECT 
-          Id,
-          EmployeeCode,
-          Month,
-          HoldType,
-          Reason,
-          IsReleased,
-          CreatedAt,
-          ReleasedAt,
-          ActionBy
-        FROM dbo.SalaryHold
-        WHERE Id = SCOPE_IDENTITY()
-      `);
+    const sqlQuery = `
+      INSERT INTO salaryhold 
+        (employeecode, month, holdtype, reason, actionby, isreleased)
+      VALUES 
+        (@employeeCode, @month, @holdType, @reason, @actionBy, false)
+      RETURNING 
+        id,
+        employeecode,
+        month,
+        holdtype,
+        reason,
+        isreleased,
+        createdat,
+        releasedat,
+        actionby
+    `;
+
+    const result = await query<SalaryHold>(sqlQuery, {
+      employeeCode: data.employeeCode,
+      month: data.month,
+      holdType: data.holdType,
+      reason: data.reason || null,
+      actionBy: data.actionBy || null,
+    });
 
     if (result.recordset.length === 0) {
       throw new Error('Failed to create salary hold');
@@ -94,28 +88,23 @@ export class SalaryHoldModel {
     employeeCode: string,
     month: string
   ): Promise<SalaryHold | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      SELECT 
+        id,
+        employeecode,
+        month,
+        holdtype,
+        reason,
+        isreleased,
+        createdat,
+        releasedat,
+        actionby
+      FROM salaryhold
+      WHERE employeecode = @employeeCode 
+        AND month = @month
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Month', sql.NVarChar(7), month)
-      .query<SalaryHold>(`
-        SELECT 
-          Id,
-          EmployeeCode,
-          Month,
-          HoldType,
-          Reason,
-          IsReleased,
-          CreatedAt,
-          ReleasedAt,
-          ActionBy
-        FROM dbo.SalaryHold
-        WHERE EmployeeCode = @EmployeeCode 
-          AND Month = @Month
-      `);
+    const result = await query<SalaryHold>(sqlQuery, { employeeCode, month });
 
     if (result.recordset.length === 0) {
       return null;
@@ -140,43 +129,37 @@ export class SalaryHoldModel {
     month: string,
     actionBy?: string
   ): Promise<SalaryHold> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     // Check if hold exists
     const existing = await this.isSalaryHeld(employeeCode, month);
     if (!existing) {
       throw new Error(`No active salary hold found for employee ${employeeCode} in month ${month}`);
     }
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Month', sql.NVarChar(7), month)
-      .input('ActionBy', sql.NVarChar(50), actionBy || null)
-      .query<SalaryHold>(`
-        UPDATE dbo.SalaryHold
-        SET IsReleased = 1,
-            ReleasedAt = GETDATE(),
-            ActionBy = COALESCE(@ActionBy, ActionBy)
-        WHERE EmployeeCode = @EmployeeCode 
-          AND Month = @Month
-          AND IsReleased = 0
-        
-        SELECT 
-          Id,
-          EmployeeCode,
-          Month,
-          HoldType,
-          Reason,
-          IsReleased,
-          CreatedAt,
-          ReleasedAt,
-          ActionBy
-        FROM dbo.SalaryHold
-        WHERE EmployeeCode = @EmployeeCode 
-          AND Month = @Month
-      `);
+    const sqlQuery = `
+      UPDATE salaryhold
+      SET isreleased = true,
+          releasedat = CURRENT_TIMESTAMP,
+          actionby = COALESCE(@actionBy, actionby)
+      WHERE employeecode = @employeeCode 
+        AND month = @month
+        AND isreleased = false
+      RETURNING 
+        id,
+        employeecode,
+        month,
+        holdtype,
+        reason,
+        isreleased,
+        createdat,
+        releasedat,
+        actionby
+    `;
+
+    const result = await query<SalaryHold>(sqlQuery, {
+      employeeCode,
+      month,
+      actionBy: actionBy || null,
+    });
 
     if (result.recordset.length === 0) {
       throw new Error('Failed to release salary hold');
@@ -192,28 +175,23 @@ export class SalaryHoldModel {
     employeeCode: string,
     month: string
   ): Promise<SalaryHold | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      SELECT 
+        id,
+        employeecode,
+        month,
+        holdtype,
+        reason,
+        isreleased,
+        createdat,
+        releasedat,
+        actionby
+      FROM salaryhold
+      WHERE employeecode = @employeeCode 
+        AND month = @month
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Month', sql.NVarChar(7), month)
-      .query<SalaryHold>(`
-        SELECT 
-          Id,
-          EmployeeCode,
-          Month,
-          HoldType,
-          Reason,
-          IsReleased,
-          CreatedAt,
-          ReleasedAt,
-          ActionBy
-        FROM dbo.SalaryHold
-        WHERE EmployeeCode = @EmployeeCode 
-          AND Month = @Month
-      `);
+    const result = await query<SalaryHold>(sqlQuery, { employeeCode, month });
 
     if (result.recordset.length === 0) {
       return null;
@@ -227,16 +205,15 @@ export class SalaryHoldModel {
    */
   private static mapToSalaryHold(row: any): SalaryHold {
     return {
-      Id: row.Id,
-      EmployeeCode: row.EmployeeCode,
-      Month: row.Month,
-      HoldType: row.HoldType,
-      Reason: row.Reason,
-      IsReleased: row.IsReleased === true || row.IsReleased === 1,
-      CreatedAt: row.CreatedAt,
-      ReleasedAt: row.ReleasedAt,
-      ActionBy: row.ActionBy,
+      Id: row.id || row.Id,
+      EmployeeCode: row.employeecode || row.EmployeeCode,
+      Month: row.month || row.Month,
+      HoldType: row.holdtype || row.HoldType,
+      Reason: row.reason || row.Reason,
+      IsReleased: row.isreleased === true || row.isreleased === 1 || row.IsReleased === true || row.IsReleased === 1,
+      CreatedAt: row.createdat || row.CreatedAt,
+      ReleasedAt: row.releasedat || row.ReleasedAt,
+      ActionBy: row.actionby || row.ActionBy,
     };
   }
 }
-

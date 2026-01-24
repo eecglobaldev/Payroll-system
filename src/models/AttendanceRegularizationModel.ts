@@ -40,47 +40,38 @@ export class AttendanceRegularizationModel {
       const regularizedStatus = reg.regularizedStatus || 'full-day';
       
       await query(`
-          MERGE INTO dbo.AttendanceRegularization AS target
-          USING (
-            SELECT 
-              @employeeCode AS EmployeeCode,
-              @regularizationDate AS RegularizationDate
-          ) AS source
-          ON target.EmployeeCode = source.EmployeeCode 
-            AND target.RegularizationDate = source.RegularizationDate
-          WHEN MATCHED THEN
-            UPDATE SET
-              OriginalStatus = @originalStatus,
-              RegularizedStatus = @regularizedStatus,
-              Month = @month,
-              Reason = @reason,
-              RequestedBy = @requestedBy,
-              ApprovedBy = @approvedBy,
-              Status = @status,
-              UpdatedAt = GETDATE()
-          WHEN NOT MATCHED THEN
-            INSERT (
-              EmployeeCode,
-              RegularizationDate,
-              OriginalStatus,
-              RegularizedStatus,
-              Month,
-              Reason,
-              RequestedBy,
-              ApprovedBy,
-              Status
-            )
-            VALUES (
-              @employeeCode,
-              @regularizationDate,
-              @originalStatus,
-              @regularizedStatus,
-              @month,
-              @reason,
-              @requestedBy,
-              @approvedBy,
-              @status
-            );
+          INSERT INTO attendanceregularization (
+            employeecode,
+            regularizationdate,
+            originalstatus,
+            regularizedstatus,
+            month,
+            reason,
+            requestedby,
+            approvedby,
+            status
+          )
+          VALUES (
+            @employeeCode,
+            @regularizationDate,
+            @originalStatus,
+            @regularizedStatus,
+            @month,
+            @reason,
+            @requestedBy,
+            @approvedBy,
+            @status
+          )
+          ON CONFLICT (employeecode, regularizationdate) 
+          DO UPDATE SET
+            originalstatus = EXCLUDED.originalstatus,
+            regularizedstatus = EXCLUDED.regularizedstatus,
+            month = EXCLUDED.month,
+            reason = EXCLUDED.reason,
+            requestedby = EXCLUDED.requestedby,
+            approvedby = EXCLUDED.approvedby,
+            status = EXCLUDED.status,
+            updatedat = CURRENT_TIMESTAMP
         `, {
           employeeCode,
           regularizationDate: reg.date,
@@ -101,29 +92,29 @@ export class AttendanceRegularizationModel {
    * @param month Month in YYYY-MM format
    */
   static async getRegularizations(
-    _employeeCode: string,
-    _month: string
+    employeeCode: string,
+    month: string
   ): Promise<AttendanceRegularization[]> {
     const result = await query<AttendanceRegularization>(`
         SELECT 
-          Id,
-          EmployeeCode,
-          RegularizationDate,
-          OriginalStatus,
-          RegularizedStatus,
-          Month,
-          Reason,
-          RequestedBy,
-          ApprovedBy,
-          Status,
-          CreatedAt,
-          UpdatedAt
-        FROM dbo.AttendanceRegularization
-        WHERE EmployeeCode = @employeeCode
-          AND Month = @month
-          AND Status = 'APPROVED'
-        ORDER BY RegularizationDate
-      `);
+          id,
+          employeecode,
+          regularizationdate,
+          originalstatus,
+          regularizedstatus,
+          month,
+          reason,
+          requestedby,
+          approvedby,
+          status,
+          createdat,
+          updatedat
+        FROM attendanceregularization
+        WHERE employeecode = @employeeCode
+          AND month = @month
+          AND status = 'APPROVED'
+        ORDER BY regularizationdate
+      `, { employeeCode, month });
 
     return result.recordset;
   }
@@ -138,9 +129,9 @@ export class AttendanceRegularizationModel {
     date: string
   ): Promise<void> {
     await query(`
-        DELETE FROM dbo.AttendanceRegularization
-        WHERE EmployeeCode = @employeeCode
-          AND RegularizationDate = @date
+        DELETE FROM attendanceregularization
+        WHERE employeecode = @employeeCode
+          AND regularizationdate = @date
       `, { employeeCode, date });
   }
 
@@ -157,27 +148,26 @@ export class AttendanceRegularizationModel {
   ): Promise<AttendanceRegularization[]> {
     const result = await query<AttendanceRegularization>(`
         SELECT 
-          Id,
-          EmployeeCode,
-          RegularizationDate,
-          OriginalStatus,
-          RegularizedStatus,
-          Month,
-          Reason,
-          RequestedBy,
-          ApprovedBy,
-          Status,
-          CreatedAt,
-          UpdatedAt
-        FROM dbo.AttendanceRegularization
-        WHERE EmployeeCode = @employeeCode
-          AND RegularizationDate >= @startDate
-          AND RegularizationDate <= @endDate
-          AND Status = 'APPROVED'
-        ORDER BY RegularizationDate
+          id,
+          employeecode,
+          regularizationdate,
+          originalstatus,
+          regularizedstatus,
+          month,
+          reason,
+          requestedby,
+          approvedby,
+          status,
+          createdat,
+          updatedat
+        FROM attendanceregularization
+        WHERE employeecode = @employeeCode
+          AND regularizationdate >= @startDate
+          AND regularizationdate <= @endDate
+          AND status = 'APPROVED'
+        ORDER BY regularizationdate
       `, { employeeCode, startDate, endDate });
 
     return result.recordset;
   }
 }
-

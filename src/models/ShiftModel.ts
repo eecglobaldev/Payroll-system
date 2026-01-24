@@ -15,21 +15,21 @@ export class ShiftModel {
     try {
       const sqlQuery = `
         SELECT 
-          ShiftId,
-          ShiftName,
-          StartTime,
-          EndTime,
-          IsSplitShift,
-          StartTime_1,
-          EndTime_1,
-          StartTime_2,
-          EndTime_2,
-          WorkHours,
-          LateThresholdMinutes,
-          CreatedAt,
-          UpdatedAt
-        FROM dbo.Employee_Shifts
-        WHERE ShiftName = @shiftName
+          shiftid,
+          shiftname,
+          starttime,
+          endtime,
+          issplitshift,
+          starttime_1,
+          endtime_1,
+          starttime_2,
+          endtime_2,
+          workhours,
+          latethresholdminutes,
+          createdat,
+          updatedat
+        FROM employee_shifts
+        WHERE shiftname = @shiftName
       `;
 
       const result = await query<any>(sqlQuery, { shiftName });
@@ -52,21 +52,21 @@ export class ShiftModel {
     try {
       const sqlQuery = `
         SELECT 
-          ShiftId,
-          ShiftName,
-          StartTime,
-          EndTime,
-          IsSplitShift,
-          StartTime_1,
-          EndTime_1,
-          StartTime_2,
-          EndTime_2,
-          WorkHours,
-          LateThresholdMinutes,
-          CreatedAt,
-          UpdatedAt
-        FROM dbo.Employee_Shifts
-        ORDER BY ShiftName
+          shiftid,
+          shiftname,
+          starttime,
+          endtime,
+          issplitshift,
+          starttime_1,
+          endtime_1,
+          starttime_2,
+          endtime_2,
+          workhours,
+          latethresholdminutes,
+          createdat,
+          updatedat
+        FROM employee_shifts
+        ORDER BY shiftname
       `;
 
       const result = await query<any>(sqlQuery, {});

@@ -7,8 +7,7 @@
  * - Overtime calculation is done dynamically in payroll service
  */
 
-import sql from 'mssql';
-import { getPool } from '../db/pool.js';
+import { query, executeProcedure } from '../db/pool.js';
 
 export interface MonthlyOT {
   Id: number;
@@ -27,32 +26,26 @@ export class MonthlyOTModel {
     employeeCode: string,
     month: string
   ): Promise<MonthlyOT | null> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     try {
-      const result = await pool
-        .request()
-        .input('EmployeeCode', sql.NVarChar(20), employeeCode)
-        .input('Month', sql.NVarChar(7), month)
-        .query<MonthlyOT>(`
-          SELECT 
-            Id,
-            EmployeeCode,
-            Month,
-            IsOvertimeEnabled,
-            CreatedAt,
-            UpdatedAt
-          FROM dbo.MonthlyOT
-          WHERE EmployeeCode = @EmployeeCode 
-            AND Month = @Month
-        `);
+      const sqlQuery = `
+        SELECT 
+          id,
+          employeecode,
+          month,
+          isovertimeenabled,
+          createdat,
+          updatedat
+        FROM monthlyot
+        WHERE employeecode = @employeeCode 
+          AND month = @month
+      `;
 
-      return result.recordset.length > 0 ? result.recordset[0] : null;
+      const result = await query<MonthlyOT>(sqlQuery, { employeeCode, month });
+      return result.recordset.length > 0 ? this.mapToMonthlyOT(result.recordset[0]) : null;
     } catch (error: any) {
       // If table doesn't exist, return null (overtime disabled by default)
-      if (error.message?.includes('Invalid object name') || error.message?.includes('does not exist')) {
-        console.warn(`[MonthlyOT] Table MonthlyOT does not exist yet. Overtime will be disabled by default.`);
+      if (error.message?.includes('does not exist') || error.message?.includes('relation')) {
+        console.warn(`[MonthlyOT] Table monthlyot does not exist yet. Overtime will be disabled by default.`);
         return null;
       }
       throw error;
@@ -61,23 +54,19 @@ export class MonthlyOTModel {
 
   /**
    * Save or update overtime status (idempotent operation)
-   * Uses stored procedure for atomic upsert
+   * Uses stored procedure if available, otherwise direct SQL upsert
    */
   static async upsertOvertimeStatus(
     employeeCode: string,
     month: string,
     isOvertimeEnabled: boolean
   ): Promise<{ operation: string; record: MonthlyOT }> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     try {
-      const result = await pool
-        .request()
-        .input('EmployeeCode', sql.NVarChar(20), employeeCode)
-        .input('Month', sql.NVarChar(7), month)
-        .input('IsOvertimeEnabled', sql.Bit, isOvertimeEnabled)
-        .execute('dbo.sp_UpsertMonthlyOT');
+      const result = await executeProcedure<{ Operation: string }>('sp_upsertmonthlyot', {
+        employeeCode,
+        month,
+        isOvertimeEnabled,
+      });
 
       // Fetch the updated/created record
       const record = await this.getOvertimeStatus(employeeCode, month);
@@ -92,7 +81,7 @@ export class MonthlyOTModel {
       };
     } catch (error: any) {
       // If stored procedure doesn't exist, try direct SQL
-      if (error.message?.includes('Could not find stored procedure')) {
+      if (error.message?.includes('function') || error.message?.includes('does not exist')) {
         console.warn('[MonthlyOT] Stored procedure not found, using direct SQL upsert');
         return await this.upsertOvertimeStatusDirect(employeeCode, month, isOvertimeEnabled);
       }
@@ -108,26 +97,27 @@ export class MonthlyOTModel {
     month: string,
     isOvertimeEnabled: boolean
   ): Promise<{ operation: string; record: MonthlyOT }> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     // Check if record exists
     const existing = await this.getOvertimeStatus(employeeCode, month);
 
     if (existing) {
       // Update existing record
-      await pool
-        .request()
-        .input('EmployeeCode', sql.NVarChar(20), employeeCode)
-        .input('Month', sql.NVarChar(7), month)
-        .input('IsOvertimeEnabled', sql.Bit, isOvertimeEnabled)
-        .query(`
-          UPDATE dbo.MonthlyOT
-          SET IsOvertimeEnabled = @IsOvertimeEnabled,
-              UpdatedAt = GETDATE()
-          WHERE EmployeeCode = @EmployeeCode 
-            AND Month = @Month
-        `);
+      const sqlQuery = `
+        UPDATE monthlyot
+        SET isovertimeenabled = @isOvertimeEnabled,
+            updatedat = CURRENT_TIMESTAMP
+        WHERE employeecode = @employeeCode 
+          AND month = @month
+        RETURNING 
+          id,
+          employeecode,
+          month,
+          isovertimeenabled,
+          createdat,
+          updatedat
+      `;
+
+      await query(sqlQuery, { employeeCode, month, isOvertimeEnabled });
 
       const record = await this.getOvertimeStatus(employeeCode, month);
       if (!record) {
@@ -137,15 +127,19 @@ export class MonthlyOTModel {
       return { operation: 'updated', record };
     } else {
       // Insert new record
-      await pool
-        .request()
-        .input('EmployeeCode', sql.NVarChar(20), employeeCode)
-        .input('Month', sql.NVarChar(7), month)
-        .input('IsOvertimeEnabled', sql.Bit, isOvertimeEnabled)
-        .query(`
-          INSERT INTO dbo.MonthlyOT (EmployeeCode, Month, IsOvertimeEnabled, CreatedAt)
-          VALUES (@EmployeeCode, @Month, @IsOvertimeEnabled, GETDATE())
-        `);
+      const sqlQuery = `
+        INSERT INTO monthlyot (employeecode, month, isovertimeenabled, createdat)
+        VALUES (@employeeCode, @month, @isOvertimeEnabled, CURRENT_TIMESTAMP)
+        RETURNING 
+          id,
+          employeecode,
+          month,
+          isovertimeenabled,
+          createdat,
+          updatedat
+      `;
+
+      await query(sqlQuery, { employeeCode, month, isOvertimeEnabled });
 
       const record = await this.getOvertimeStatus(employeeCode, month);
       if (!record) {
@@ -163,32 +157,41 @@ export class MonthlyOTModel {
     employeeCodes: string[],
     month: string
   ): Promise<Map<string, boolean>> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     if (employeeCodes.length === 0) {
       return new Map();
     }
 
     try {
-      // Create a table-valued parameter or use IN clause
-      const employeeCodesStr = employeeCodes.map(code => `'${code.replace(/'/g, "''")}'`).join(',');
-      
-      const result = await pool
-        .request()
-        .input('Month', sql.NVarChar(7), month)
-        .query<MonthlyOT>(`
-          SELECT 
-            EmployeeCode,
-            IsOvertimeEnabled
-          FROM dbo.MonthlyOT
-          WHERE Month = @Month
-            AND EmployeeCode IN (${employeeCodesStr})
-        `);
+      // Build IN clause with parameterized values
+      // PostgreSQL pg library supports arrays, but we need to handle it properly
+      const placeholders = employeeCodes.map((_, index) => `$${index + 2}`).join(', ');
+      const sqlQuery = `
+        SELECT 
+          employeecode,
+          isovertimeenabled
+        FROM monthlyot
+        WHERE month = $1
+          AND employeecode IN (${placeholders})
+      `;
+
+      // Use direct pool query for array support
+      const { getPool } = await import('../db/pool.js');
+      const pool = getPool();
+      if (!pool) {
+        throw new Error('Database pool not available');
+      }
+
+      const values = [month, ...employeeCodes];
+      const pgResult = await pool.query(sqlQuery, values);
 
       const map = new Map<string, boolean>();
-      result.recordset.forEach(record => {
-        map.set(record.EmployeeCode, record.IsOvertimeEnabled);
+      pgResult.rows.forEach((row: any) => {
+        const code = row.employeecode || row.EmployeeCode || '';
+        const enabled = row.isovertimeenabled === true || row.isovertimeenabled === 1
+          || row.IsOvertimeEnabled === true || row.IsOvertimeEnabled === 1;
+        if (code) {
+          map.set(code, enabled);
+        }
       });
 
       // Set default false for employees not in database
@@ -201,8 +204,8 @@ export class MonthlyOTModel {
       return map;
     } catch (error: any) {
       // If table doesn't exist, return all false
-      if (error.message?.includes('Invalid object name') || error.message?.includes('does not exist')) {
-        console.warn(`[MonthlyOT] Table MonthlyOT does not exist yet. All overtime will be disabled.`);
+      if (error.message?.includes('does not exist') || error.message?.includes('relation')) {
+        console.warn(`[MonthlyOT] Table monthlyot does not exist yet. All overtime will be disabled.`);
         const map = new Map<string, boolean>();
         employeeCodes.forEach(code => map.set(code, false));
         return map;
@@ -210,5 +213,21 @@ export class MonthlyOTModel {
       throw error;
     }
   }
-}
 
+  /**
+   * Map database row to MonthlyOT interface
+   * Handles both lowercase (PostgreSQL) and PascalCase (legacy) column names
+   */
+  private static mapToMonthlyOT(row: any): MonthlyOT {
+    return {
+      Id: row.id || row.Id || 0,
+      EmployeeCode: row.employeecode || row.EmployeeCode || '',
+      Month: row.month || row.Month || '',
+      IsOvertimeEnabled: (row.isovertimeenabled === true || row.isovertimeenabled === 1) 
+        || (row.IsOvertimeEnabled === true || row.IsOvertimeEnabled === 1) 
+        || false,
+      CreatedAt: row.createdat || row.CreatedAt || new Date(),
+      UpdatedAt: row.updatedat || row.UpdatedAt || null,
+    };
+  }
+}

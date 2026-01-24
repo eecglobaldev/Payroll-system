@@ -3,7 +3,7 @@
  * Shared types and interfaces for the Payroll & Attendance API
  */
 
-import { IResult } from 'mssql';
+// PostgreSQL query result type (compatible with SQL Server format)
 
 /* ===================================
  * Configuration Types
@@ -407,7 +407,12 @@ export interface QueryParams {
  * Database Query Types
  * ================================ */
 
-export type QueryResult<T = any> = IResult<T>;
+// QueryResult type for compatibility with existing code
+export interface QueryResult<T = any> {
+  recordset: T[];
+  rowsAffected: number[];
+  returnValue: number;
+}
 
 export interface QueryParameters {
   [key: string]: string | number | boolean | Date | null | undefined;

@@ -31,23 +31,23 @@ export class EmployeeShiftAssignmentModel {
     try {
       const sqlQuery = `
         SELECT
-          Id,
-          EmployeeCode,
-          ShiftName,
-          FromDate,
-          ToDate,
-          CreatedAt
-        FROM dbo.Employee_Shift_Assignments
-        WHERE EmployeeCode = @employeeCode
+          id,
+          employeecode,
+          shiftname,
+          fromdate,
+          todate,
+          createdat
+        FROM employee_shift_assignments
+        WHERE employeecode = @employeeCode
           AND (
             -- Assignment starts within range
-            (FromDate >= @startDate AND FromDate <= @endDate)
+            (fromdate >= @startDate AND fromdate <= @endDate)
             -- Assignment ends within range
-            OR (ToDate >= @startDate AND ToDate <= @endDate)
+            OR (todate >= @startDate AND todate <= @endDate)
             -- Assignment completely covers range
-            OR (FromDate <= @startDate AND ToDate >= @endDate)
+            OR (fromdate <= @startDate AND todate >= @endDate)
           )
-        ORDER BY FromDate ASC, CreatedAt DESC
+        ORDER BY fromdate ASC, createdat DESC
       `;
 
       const result = await query<any>(sqlQuery, {
@@ -114,20 +114,19 @@ export class EmployeeShiftAssignmentModel {
       }
 
       const sqlQuery = `
-        INSERT INTO dbo.Employee_Shift_Assignments (
-          EmployeeCode,
-          ShiftName,
-          FromDate,
-          ToDate
+        INSERT INTO employee_shift_assignments (
+          employeecode,
+          shiftname,
+          fromdate,
+          todate
         )
         VALUES (
           @employeeCode,
           @shiftName,
           @fromDate,
           @toDate
-        );
-        
-        SELECT SCOPE_IDENTITY() AS Id;
+        )
+        RETURNING id;
       `;
 
       const result = await query<any>(sqlQuery, {
@@ -167,7 +166,7 @@ export class EmployeeShiftAssignmentModel {
           FromDate,
           ToDate,
           CreatedAt
-        FROM dbo.Employee_Shift_Assignments
+        FROM employee_shift_assignments
         WHERE Id = @id
       `;
 
@@ -220,8 +219,8 @@ export class EmployeeShiftAssignmentModel {
           FromDate,
           ToDate,
           CreatedAt
-        FROM dbo.Employee_Shift_Assignments
-        WHERE EmployeeCode = @employeeCode
+        FROM employee_shift_assignments
+        WHERE employeecode = @employeeCode
         ORDER BY FromDate ASC, CreatedAt DESC
       `;
 

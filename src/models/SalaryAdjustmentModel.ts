@@ -6,8 +6,7 @@
  * - SalaryAdjustments: Stores deductions (e.g., T-shirt cost) and additions (e.g., reimbursements)
  */
 
-import sql from 'mssql';
-import { getPool } from '../db/pool.js';
+import { query, executeProcedure } from '../db/pool.js';
 
 export interface SalaryAdjustment {
   Id: number;
@@ -47,31 +46,25 @@ export class SalaryAdjustmentModel {
     employeeCode: string,
     month: string
   ): Promise<SalaryAdjustment[]> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      SELECT 
+        id,
+        employeecode,
+        month,
+        type,
+        category,
+        amount,
+        description,
+        createdby,
+        createdat,
+        updatedat
+      FROM salaryadjustments
+      WHERE employeecode = @employeeCode 
+        AND month = @month
+      ORDER BY type, category
+    `;
 
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Month', sql.NVarChar(7), month)
-      .query<SalaryAdjustment>(`
-        SELECT 
-          Id,
-          EmployeeCode,
-          Month,
-          Type,
-          Category,
-          Amount,
-          Description,
-          CreatedBy,
-          CreatedAt,
-          UpdatedAt
-        FROM dbo.SalaryAdjustments
-        WHERE EmployeeCode = @EmployeeCode 
-          AND Month = @Month
-        ORDER BY Type, Category
-      `);
-
+    const result = await query<SalaryAdjustment>(sqlQuery, { employeeCode, month });
     return result.recordset;
   }
 
@@ -102,14 +95,11 @@ export class SalaryAdjustmentModel {
 
   /**
    * Save or update salary adjustment (idempotent operation)
-   * Uses stored procedure for atomic upsert
+   * Uses PostgreSQL INSERT ... ON CONFLICT for atomic upsert
    */
   static async upsertAdjustment(
     data: SaveSalaryAdjustmentRequest
   ): Promise<{ operation: string; record: SalaryAdjustment }> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
-
     // Validate amount
     if (data.amount < 0) {
       throw new Error('Amount must be >= 0');
@@ -120,31 +110,90 @@ export class SalaryAdjustmentModel {
       throw new Error('Type must be DEDUCTION or ADDITION');
     }
 
-    // Call stored procedure
-    const result = await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(20), data.employeeCode)
-      .input('Month', sql.NVarChar(7), data.month)
-      .input('Type', sql.NVarChar(20), data.type)
-      .input('Category', sql.NVarChar(50), data.category)
-      .input('Amount', sql.Decimal(10, 2), data.amount)
-      .input('Description', sql.NVarChar(255), data.description || null)
-      .input('CreatedBy', sql.NVarChar(50), data.createdBy || null)
-      .execute('dbo.UpsertSalaryAdjustment');
+    // Try to use stored procedure first, fallback to direct SQL
+    try {
+      const result = await executeProcedure<{ Operation: string }>('upsertsalaryadjustment', {
+        employeeCode: data.employeeCode,
+        month: data.month,
+        type: data.type,
+        category: data.category,
+        amount: data.amount,
+        description: data.description || null,
+        createdBy: data.createdBy || null,
+      });
 
-    const operation = result.recordset[0]?.Operation || 'UNKNOWN';
+      const operation = result.recordset[0]?.Operation || 'UNKNOWN';
 
-    // Fetch the updated/inserted record
-    const adjustments = await this.getAdjustments(data.employeeCode, data.month);
-    const record = adjustments.find(
-      a => a.Type === data.type && a.Category === data.category
-    );
+      // Fetch the updated/inserted record
+      const adjustments = await this.getAdjustments(data.employeeCode, data.month);
+      const record = adjustments.find(
+        a => a.Type === data.type && a.Category === data.category
+      );
 
-    if (!record) {
-      throw new Error('Failed to retrieve saved adjustment');
+      if (!record) {
+        throw new Error('Failed to retrieve saved adjustment');
+      }
+
+      return { operation, record };
+    } catch (error: any) {
+      // If stored procedure doesn't exist, use direct SQL upsert
+      if (error.message?.includes('function') || error.message?.includes('does not exist')) {
+        console.warn('[SalaryAdjustment] Stored procedure not found, using direct SQL upsert');
+        return await this.upsertAdjustmentDirect(data);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Direct SQL upsert (fallback if stored procedure doesn't exist)
+   */
+  private static async upsertAdjustmentDirect(
+    data: SaveSalaryAdjustmentRequest
+  ): Promise<{ operation: string; record: SalaryAdjustment }> {
+    const sqlQuery = `
+      INSERT INTO salaryadjustments 
+        (employeecode, month, type, category, amount, description, createdby)
+      VALUES 
+        (@employeeCode, @month, @type, @category, @amount, @description, @createdBy)
+      ON CONFLICT (employeecode, month, type, category) 
+      DO UPDATE SET
+        amount = EXCLUDED.amount,
+        description = EXCLUDED.description,
+        createdby = EXCLUDED.createdby,
+        updatedat = CURRENT_TIMESTAMP
+      RETURNING 
+        id,
+        employeecode,
+        month,
+        type,
+        category,
+        amount,
+        description,
+        createdby,
+        createdat,
+        updatedat
+    `;
+
+    const result = await query<SalaryAdjustment>(sqlQuery, {
+      employeeCode: data.employeeCode,
+      month: data.month,
+      type: data.type,
+      category: data.category,
+      amount: data.amount,
+      description: data.description || null,
+      createdBy: data.createdBy || null,
+    });
+
+    if (result.recordset.length === 0) {
+      throw new Error('Failed to upsert salary adjustment');
     }
 
-    return { operation, record };
+    // Determine operation type by checking if record existed before
+    const existing = await this.getAdjustments(data.employeeCode, data.month);
+    const operation = existing.length > 1 ? 'updated' : 'created';
+
+    return { operation, record: result.recordset[0] };
   }
 
   /**
@@ -156,22 +205,14 @@ export class SalaryAdjustmentModel {
     type: 'DEDUCTION' | 'ADDITION',
     category: string
   ): Promise<void> {
-    const pool = await getPool();
-    if (!pool) throw new Error('Database pool not available');
+    const sqlQuery = `
+      DELETE FROM salaryadjustments
+      WHERE employeecode = @employeeCode 
+        AND month = @month 
+        AND type = @type 
+        AND category = @category
+    `;
 
-    await pool
-      .request()
-      .input('EmployeeCode', sql.NVarChar(50), employeeCode)
-      .input('Month', sql.NVarChar(7), month)
-      .input('Type', sql.NVarChar(20), type)
-      .input('Category', sql.NVarChar(50), category)
-      .query(`
-        DELETE FROM dbo.SalaryAdjustments
-        WHERE EmployeeCode = @EmployeeCode 
-          AND Month = @Month 
-          AND Type = @Type 
-          AND Category = @Category
-      `);
+    await query(sqlQuery, { employeeCode, month, type, category });
   }
 }
-

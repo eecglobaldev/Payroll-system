@@ -98,8 +98,31 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 });
 
 /**
- * Public Routes (no authentication required)
+ * Root Route
  */
+app.get('/', (_req: Request, res: Response) => {
+  res.json({
+    service: 'Payroll & Attendance API',
+    version: '1.0.0',
+    status: 'running',
+    database: 'PostgreSQL',
+    endpoints: {
+      health: '/api/health',
+      ping: '/api/ping',
+      auth: '/api/auth',
+      employee: '/api/employee',
+      attendance: '/api/attendance (API key required)',
+      salary: '/api/salary (API key required)',
+      employees: '/api/employees (API key required)',
+      employeeDetails: '/api/employee-details (API key required)',
+      leave: '/api/leave (API key required)',
+      shifts: '/api/shifts (API key required)',
+      overtime: '/api/overtime (API key required)',
+      employeeShifts: '/api/employee-shifts (API key required)',
+    },
+    documentation: 'See README.md for API documentation',
+  });
+});
 
 // Health check endpoint
 app.get('/api/ping', (_req: Request, res: Response) => {
@@ -115,10 +138,12 @@ app.get('/api/ping', (_req: Request, res: Response) => {
 app.get('/api/health', async (_req: Request, res: Response) => {
   try {
     const pool = db.getPool();
-    const isConnected = pool && pool.connected;
 
-    if (!isConnected) {
+    if (!pool) {
       await db.connect();
+    } else {
+      // Test connection with a simple query
+      await pool.query('SELECT 1');
     }
 
     res.json({
@@ -195,22 +220,28 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 async function startServer(): Promise<void> {
   try {
-    // Connect to database
-    console.log('[Server] Initializing database connection...');
-    await db.connect();
-    console.log('[Server] ✓ Database connected');
-
-    // Start HTTP server
+    // Start HTTP server first (non-blocking)
     app.listen(PORT, '0.0.0.0', () => {
       console.log('='.repeat(60));
       console.log(`[Server] 🚀 Payroll & Attendance API is running`);
       console.log(`[Server] Port: ${PORT}`);
       console.log(`[Server] Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`[Server] Database: ${process.env.DB_HOST}:${process.env.DB_PORT}`);
+      console.log(`[Server] Database: ${process.env.DB_HOST || 'not configured'}:${process.env.DB_PORT || '25060'} (PostgreSQL)`);
       console.log(`[Server] Time: ${new Date().toISOString()}`);
       console.log('='.repeat(60));
       console.log(`[Server] Health check: http://localhost:${PORT}/api/ping`);
       console.log('='.repeat(60));
+    });
+
+    // Connect to database asynchronously (non-blocking)
+    // This allows the server to start even if DB connection fails initially
+    console.log('[Server] Initializing database connection...');
+    db.connect().then(() => {
+      console.log('[Server] ✓ Database connected');
+    }).catch((err: Error) => {
+      console.error('[Server] ⚠ Database connection failed:', err.message);
+      console.log('[Server] Server is running but database-dependent endpoints may fail');
+      console.log('[Server] Database connection will be retried on first database request');
     });
   } catch (err) {
     const error = err as Error;

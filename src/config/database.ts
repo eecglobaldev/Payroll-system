@@ -1,18 +1,18 @@
 /**
  * Database Configuration
  * Helper functions for dynamic table names
+ * PostgreSQL: Table names are lowercase, no schema prefix needed
  */
 
 /**
  * Get the current month's DeviceLogs table name
- * Format: dbo.DeviceLogs_MM_YYYY
+ * Format: devicelogs_MM_YYYY (PostgreSQL lowercase)
  */
-
 export function getCurrentDeviceLogsTable(): string {
   const now = new Date();
   const month = now.getMonth() + 1; // 1-12
   const year = now.getFullYear();
-  return `dbo.DeviceLogs_${month}_${year}`;
+  return `devicelogs_${month}_${year}`;
 }
 
 /**
@@ -22,7 +22,7 @@ export function getCurrentDeviceLogsTable(): string {
 export function getDeviceLogsTableForMonth(month: string): string {
   const [year, monthNum] = month.split('-');
   const monthInt = parseInt(monthNum, 10);
-  return `dbo.DeviceLogs_${monthInt}_${year}`;
+  return `devicelogs_${monthInt}_${year}`;
 }
 
 /**
@@ -33,7 +33,7 @@ export function getDeviceLogsTableForDate(date: string): string {
   const [year, month] = date.split('-');
   // Remove leading zero from month for table naming
   const monthNum = parseInt(month, 10);
-  return `dbo.DeviceLogs_${monthNum}_${year}`;
+  return `devicelogs_${monthNum}_${year}`;
 }
 
 /**
@@ -53,7 +53,7 @@ export function getDeviceLogsTablesForRange(startDate: string, endDate: string):
   for (let monthNum = startMonth; monthNum <= endMonth; monthNum++) {
     const year = Math.floor(monthNum / 12);
     const month = (monthNum % 12) + 1;
-    const tableName = `dbo.DeviceLogs_${month}_${year}`;
+    const tableName = `devicelogs_${month}_${year}`;
     
     if (!tables.includes(tableName)) {
       tables.push(tableName);

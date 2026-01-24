@@ -42,8 +42,8 @@ export class EmployeeDetailsModel {
           UpdatedAt,
           CreatedBy,
           UpdatedBy
-        FROM dbo.EmployeeDetails
-        WHERE EmployeeCode = @employeeCode
+        FROM employeedetails
+        WHERE employeecode = @employeeCode
       `;
 
       const result = await query<any>(sqlQuery, { employeeCode });
@@ -90,7 +90,7 @@ export class EmployeeDetailsModel {
           UpdatedAt,
           CreatedBy,
           UpdatedBy
-        FROM dbo.EmployeeDetails
+        FROM employeedetails
         WHERE ExitDate IS NULL
       `;
       
@@ -121,8 +121,8 @@ export class EmployeeDetailsModel {
         
         sqlQuery += `
           OR (ExitDate IS NOT NULL 
-              AND CONVERT(date, ExitDate) >= @cycleStart 
-              AND CONVERT(date, ExitDate) <= @cycleEnd)
+              AND DATE(exitdate) >= @cycleStart 
+              AND DATE(exitdate) <= @cycleEnd)
         `;
       }
       
@@ -163,8 +163,8 @@ export class EmployeeDetailsModel {
           UpdatedAt,
           CreatedBy,
           UpdatedBy
-        FROM dbo.EmployeeDetails
-        ORDER BY EmployeeCode
+        FROM employeedetails
+        ORDER BY employeecode
       `;
 
       const result = await query<any>(sqlQuery);
@@ -202,9 +202,9 @@ export class EmployeeDetailsModel {
           UpdatedAt,
           CreatedBy,
           UpdatedBy
-        FROM dbo.EmployeeDetails
+        FROM employeedetails
         WHERE Department = @department AND ExitDate IS NULL
-        ORDER BY EmployeeCode
+        ORDER BY employeecode
       `;
 
       const result = await query<any>(sqlQuery, { department });
@@ -235,7 +235,7 @@ export class EmployeeDetailsModel {
       }
 
       const sqlQuery = `
-        INSERT INTO dbo.EmployeeDetails (
+        INSERT INTO employeedetails (
           EmployeeCode,
           JoiningDate,
           BranchLocation,
@@ -370,17 +370,17 @@ export class EmployeeDetailsModel {
       }
 
       // Always update UpdatedAt
-      updates.push('UpdatedAt = GETDATE()');
+      updates.push('updatedat = CURRENT_TIMESTAMP');
 
       if (updates.length === 1) { // Only UpdatedAt, no real updates
         throw new Error('No fields provided to update');
       }
 
       const sqlQuery = `
-        UPDATE dbo.EmployeeDetails
+        UPDATE employeedetails
         SET ${updates.join(', ')}
-        OUTPUT INSERTED.*
-        WHERE EmployeeCode = @employeeCode
+        WHERE employeecode = @employeeCode
+        RETURNING *;
       `;
 
       const result = await query<any>(sqlQuery, params);
@@ -419,8 +419,8 @@ export class EmployeeDetailsModel {
     try {
       const sqlQuery = `
         SELECT COUNT(*) as Count
-        FROM dbo.EmployeeDetails
-        WHERE EmployeeCode = @employeeCode
+        FROM employeedetails
+        WHERE employeecode = @employeeCode
       `;
 
       const result = await query<{ Count: number }>(sqlQuery, { employeeCode });
