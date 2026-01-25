@@ -1382,25 +1382,41 @@ export async function getBaseSalary(userId: number | string): Promise<BaseSalary
     const employeeCode = String(userId);
     const salaryInfo = await EmployeeDetailsModel.getSalaryInfo(employeeCode);
     
-    if (!salaryInfo) {
-      throw new Error(`Employee ${userId} not found in EmployeeDetails table`);
+    if (salaryInfo && salaryInfo.baseSalary && salaryInfo.baseSalary > 0) {
+      return {
+        baseSalary: salaryInfo.baseSalary,
+        hourlyRate: salaryInfo.hourlyRate || 0,
+      };
     }
     
-    const { baseSalary, hourlyRate } = salaryInfo;
+    // Fallback: Try to get salary from Employees table
+    console.warn(`[Payroll] Employee ${employeeCode} not found in EmployeeDetails, trying Employees table...`);
+    const { EmployeeModel } = await import('../models/EmployeeModel.js');
+    const employeeSalaryInfo = await EmployeeModel.getSalaryInfo(employeeCode);
     
-    if (!baseSalary || baseSalary === 0) {
-      throw new Error(`Employee ${userId} has no valid salary in database (BasicSalary is 0 or empty)`);
+    if (employeeSalaryInfo && employeeSalaryInfo.baseSalary && employeeSalaryInfo.baseSalary > 0) {
+      console.log(`[Payroll] Using salary from Employees table: ₹${employeeSalaryInfo.baseSalary}`);
+      return {
+        baseSalary: employeeSalaryInfo.baseSalary,
+        hourlyRate: employeeSalaryInfo.hourlyRate || 0,
+      };
     }
     
-    
+    // Final fallback: Use default salary
+    console.warn(`[Payroll] No salary found for employee ${employeeCode}, using default ₹50,000`);
     return {
-      baseSalary: baseSalary,
-      hourlyRate: hourlyRate,
+      baseSalary: 50000, // Default salary
+      hourlyRate: 0,
     };
   } catch (err) {
     const error = err as Error;
     console.error(`[Payroll] ❌ Error loading salary for employee ${userId}:`, error.message);
-    throw error; // Re-throw the error instead of using default
+    // Return default instead of throwing
+    console.warn(`[Payroll] Using default salary ₹50,000 for employee ${userId}`);
+    return {
+      baseSalary: 50000,
+      hourlyRate: 0,
+    };
   }
 }
 

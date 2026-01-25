@@ -6,6 +6,7 @@
 import { Request, Response } from 'express';
 import { EmployeeModel } from '../models/EmployeeModel.js';
 import { EmployeeDetailsModel } from '../models/EmployeeDetailsModel.js';
+import { AdminUserModel } from '../models/AdminUserModel.js';
 import { otpService } from '../services/otpService.js';
 import { msg91Service } from '../services/msg91Service.js';
 import { generateToken } from '../utils/jwt.js';
@@ -296,6 +297,69 @@ export class AuthController {
     } catch (error) {
       const err = error as Error;
       console.error('[AuthController] Error in resendOTP:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: err.message,
+      });
+    }
+  }
+
+  /**
+   * POST /api/auth/admin/login
+   * Admin login with username and password
+   */
+  static async adminLogin(req: Request, res: Response): Promise<void> {
+    try {
+      const { username, password } = req.body;
+
+      if (!username || typeof username !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Username is required',
+        });
+        return;
+      }
+
+      if (!password || typeof password !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Password is required',
+        });
+        return;
+      }
+
+      // Verify admin credentials
+      const admin = await AdminUserModel.verifyCredentials(username, password);
+
+      if (!admin) {
+        res.status(401).json({
+          success: false,
+          error: 'Invalid username or password',
+        });
+        return;
+      }
+
+      // Generate JWT token
+      const token = generateToken({
+        employeeCode: admin.username, // Use username as employeeCode for consistency
+        role: 'ADMIN',
+        userId: admin.id,
+      });
+
+      // Return token and admin info
+      res.json({
+        success: true,
+        data: {
+          token,
+          username: admin.username,
+          role: 'ADMIN',
+        },
+        message: 'Login successful',
+      });
+    } catch (error) {
+      const err = error as Error;
+      console.error('[AuthController] Error in adminLogin:', err);
       res.status(500).json({
         success: false,
         error: 'Internal server error',

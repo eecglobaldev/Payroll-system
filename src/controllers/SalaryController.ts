@@ -15,6 +15,17 @@ export class SalaryController {
   static async calculateSalary(req: Request, res: Response): Promise<void> {
     try {
       const { userId } = req.params;
+      
+      // Validate userId is not NaN or invalid
+      if (!userId || userId === 'NaN' || userId === 'undefined' || isNaN(Number(userId))) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid employee ID',
+          message: 'Employee ID must be a valid number',
+        });
+        return;
+      }
+      
       const month = (req.query.month as string) || currentMonth();
       const joinDate = (req.query.joinDate as string) || undefined;
       const exitDate = (req.query.exitDate as string) || undefined;
@@ -98,17 +109,57 @@ export class SalaryController {
         return;
       }
 
+      // Convert userId to EmployeeCode
+      // userId can be either EmployeeId (number) or EmployeeCode (string)
+      // The payroll service expects EmployeeCode, so we need to look it up if userId is numeric
+      let employeeCode: string;
+      const userIdNum = Number(userId);
+      
+      if (!isNaN(userIdNum) && userIdNum > 0) {
+        // userId is a number (EmployeeId), need to get EmployeeCode
+        const { EmployeeModel } = await import('../models/EmployeeModel.js');
+        const employee = await EmployeeModel.getById(userIdNum);
+        if (!employee) {
+          res.status(404).json({
+            success: false,
+            error: 'Employee not found',
+            message: `Employee with ID ${userIdNum} not found`,
+          });
+          return;
+        }
+        employeeCode = employee.EmployeeCode;
+      } else {
+        // userId is already EmployeeCode (string)
+        employeeCode = String(userId);
+      }
+      
       // Always pass arrays (even if empty) to prevent backend from fetching stale data from DB
       // Empty arrays explicitly mean "no leaves", undefined means "fetch from DB"
       // userid in devicelogs is VARCHAR (string), convert to string
-      const salaryData = await payroll.calculateSalary(
-        String(userId), 
-        month,
-        joinDate,
-        exitDate,
-        paidLeaveDates, // Pass array even if empty - backend will use this instead of DB
-        casualLeaveDates // Pass array even if empty - backend will use this instead of DB
-      );
+      let salaryData;
+      try {
+        salaryData = await payroll.calculateSalary(
+          employeeCode, 
+          month,
+          joinDate,
+          exitDate,
+          paidLeaveDates, // Pass array even if empty - backend will use this instead of DB
+          casualLeaveDates // Pass array even if empty - backend will use this instead of DB
+        );
+      } catch (err) {
+        const error = err as Error;
+        // If it's a salary info error, return a more user-friendly message
+        if (error.message.includes('Employee details not found') || error.message.includes('not found in EmployeeDetails')) {
+          res.status(404).json({
+            success: false,
+            error: 'Employee details not found',
+            message: `Employee ${employeeCode} does not have salary information configured. Please add employee details first.`,
+          });
+          return;
+        }
+        // Re-throw other errors
+        throw err;
+      }
       
       // Use the dailyBreakdown from salaryData.attendance (already calculated with correct weekoff payment status)
       // This ensures we store the EXACT same breakdown that was used for salary calculation

@@ -28,6 +28,11 @@ const resendOTPSchema = Joi.object({
   employeeCode: Joi.string().required().trim(),
 });
 
+const adminLoginSchema = Joi.object({
+  username: Joi.string().required().trim(),
+  password: Joi.string().required(),
+});
+
 /**
  * POST /api/auth/employee/send-otp
  * Send OTP to employee's mobile number
@@ -56,6 +61,16 @@ router.post(
   '/employee/resend-otp',
   validateRequest(resendOTPSchema, 'body'),
   AuthController.resendOTP
+);
+
+/**
+ * POST /api/auth/admin/login
+ * Admin login with username and password
+ */
+router.post(
+  '/admin/login',
+  validateRequest(adminLoginSchema, 'body'),
+  AuthController.adminLogin
 );
 
 export default router;

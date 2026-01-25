@@ -12,17 +12,23 @@ export class EmployeeModel {
    * Handles both lowercase (PostgreSQL default) and PascalCase column names
    */
   private static mapToEmployee(row: any): Employee {
+    // PostgreSQL returns lowercase column names by default
+    // Try all possible case variations
+    const employeeId = row.employeeid ?? row.EmployeeId ?? row.employeeId ?? row.EMPLOYEEID ?? null;
+    const employeeCode = row.employeecode ?? row.EmployeeCode ?? row.employeeCode ?? row.EMPLOYEECODE ?? null;
+    const employeeName = row.employeename ?? row.EmployeeName ?? row.employeeName ?? row.EMPLOYEENAME ?? 'Unknown';
+    
     return {
-      EmployeeId: row.employeeid || row.EmployeeId || row.employeeId,
-      EmployeeCode: row.employeecode || row.EmployeeCode || row.employeeCode,
-      EmployeeName: row.employeename || row.EmployeeName || row.employeeName,
-      StringCode: row.stringcode || row.StringCode || row.stringCode,
-      NumericCode: row.numericcode || row.NumericCode || row.numericCode,
-      Gender: row.gender || row.Gender,
-      CompanyId: row.companyid || row.CompanyId || row.companyId,
-      DepartmentId: row.departmentid || row.DepartmentId || row.departmentId,
-      Designation: row.designation || row.Designation,
-      CategoryId: row.categoryid || row.CategoryId || row.categoryId,
+      EmployeeId: employeeId,
+      EmployeeCode: employeeCode,
+      EmployeeName: employeeName,
+      StringCode: row.stringcode ?? row.StringCode ?? row.stringCode ?? row.STRINGCODE ?? null,
+      NumericCode: row.numericcode ?? row.NumericCode ?? row.numericCode ?? row.NUMERICCODE ?? null,
+      Gender: row.gender ?? row.Gender ?? row.GENDER ?? null,
+      CompanyId: row.companyid ?? row.CompanyId ?? row.companyId ?? row.COMPANYID ?? null,
+      DepartmentId: row.departmentid ?? row.DepartmentId ?? row.departmentId ?? row.DEPARTMENTID ?? null,
+      Designation: row.designation ?? row.Designation ?? row.DESIGNATION ?? null,
+      CategoryId: row.categoryid ?? row.CategoryId ?? row.categoryId ?? row.CATEGORYID ?? null,
     };
   }
 
@@ -47,6 +53,35 @@ export class EmployeeModel {
     `;
 
     const result = await query<any>(sqlQuery, { employeeCode });
+    if (result.recordset.length === 0) {
+      return null;
+    }
+    
+    // Map database row to Employee interface
+    return this.mapToEmployee(result.recordset[0]);
+  }
+
+  /**
+   * Get employee by ID
+   */
+  static async getById(employeeId: number): Promise<Employee | null> {
+    const sqlQuery = `
+      SELECT 
+        employeeid,
+        employeecode,
+        employeename,
+        stringcode,
+        numericcode,
+        gender,
+        companyid,
+        departmentid,
+        designation,
+        categoryid
+      FROM employees
+      WHERE employeeid = @employeeId
+    `;
+
+    const result = await query<any>(sqlQuery, { employeeId });
     if (result.recordset.length === 0) {
       return null;
     }
@@ -94,24 +129,42 @@ export class EmployeeModel {
    * Get all employees (IsActive column doesn't exist in actual table)
    */
   static async getAllActive(): Promise<Employee[]> {
+    // Use quoted identifiers to ensure case sensitivity
     const sqlQuery = `
       SELECT 
-        employeeid,
-        employeecode,
-        employeename,
-        stringcode,
-        numericcode,
-        gender,
-        companyid,
-        departmentid,
-        designation,
-        categoryid
+        "employeeid",
+        "employeecode",
+        "employeename",
+        "stringcode",
+        "numericcode",
+        "gender",
+        "companyid",
+        "departmentid",
+        "designation",
+        "categoryid"
       FROM employees
-      ORDER BY employeecode
+      ORDER BY "employeecode"
     `;
 
-    const result = await query<Employee>(sqlQuery);
-    return result.recordset;
+    const result = await query<any>(sqlQuery);
+    
+    // Debug: Log first row to see what we're getting
+    if (result.recordset.length > 0) {
+      const firstRow = result.recordset[0];
+      console.log('[EmployeeModel] Sample row keys:', Object.keys(firstRow));
+      console.log('[EmployeeModel] Sample row (first 500 chars):', JSON.stringify(firstRow, null, 2).substring(0, 500));
+      console.log('[EmployeeModel] employeeid value:', firstRow.employeeid, firstRow.EmployeeId, firstRow.EMPLOYEEID);
+      console.log('[EmployeeModel] employeecode value:', firstRow.employeecode, firstRow.EmployeeCode, firstRow.EMPLOYEECODE);
+    }
+    
+    // Map each row using mapToEmployee
+    const mapped = result.recordset.map(row => this.mapToEmployee(row));
+    console.log(`[EmployeeModel] Mapped ${mapped.length} employees. First employee:`, {
+      EmployeeId: mapped[0]?.EmployeeId,
+      EmployeeCode: mapped[0]?.EmployeeCode,
+      EmployeeName: mapped[0]?.EmployeeName
+    });
+    return mapped;
   }
 
   /**

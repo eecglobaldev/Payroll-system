@@ -32,28 +32,51 @@ export class EmployeeController {
       // Create a map of details by EmployeeCode for quick lookup
       const detailsMap = new Map<string, any>();
       allDetails.forEach(detail => {
-        detailsMap.set(detail.EmployeeCode, detail);
+        // Use lowercase employeecode for matching (PostgreSQL returns lowercase)
+        const code = detail.EmployeeCode || (detail as any).employeecode || '';
+        if (code) {
+          detailsMap.set(code, detail);
+        }
       });
+      
+      console.log(`[EmployeeController] Loaded ${allDetails.length} EmployeeDetails records`);
+      console.log(`[EmployeeController] Sample detail keys:`, allDetails.length > 0 ? Object.keys(allDetails[0]) : 'none');
 
       // Transform to match frontend format, merging with details when available
-      const formattedEmployees = employees.map(emp => {
-        const details = detailsMap.get(emp.EmployeeCode);
-        
-        return {
-          employeeNo: emp.EmployeeCode || '',
-          name: emp.EmployeeName || 'Unknown',
-          department: details?.Department || emp.DepartmentId?.toString() || 'N/A',
-          designation: details?.Designation || emp.Designation || 'N/A',
-          fullBasic: details?.BasicSalary || 0,
-          monthlyCTC: details?.MonthlyCTC || 0,
-          annualCTC: details?.AnnualCTC || 0,
-          joinDate: details?.JoiningDate || 'N/A',
-          status: details ? (details.ExitDate === null ? 'Active' : 'Exited') : 'Active',
-          location: details?.BranchLocation || 'N/A',
-        };
-      });
+      // FILTER: Only include employees who have EmployeeDetails records
+      const formattedEmployees = employees
+        .filter(emp => {
+          const hasCode = emp.EmployeeCode && emp.EmployeeCode.trim() !== '';
+          if (!hasCode) {
+            return false; // Skip employees without EmployeeCode
+          }
+          const details = detailsMap.get(emp.EmployeeCode);
+          return details !== undefined; // Only include if EmployeeDetails exists
+        })
+        .map(emp => {
+          const details = detailsMap.get(emp.EmployeeCode!); // Safe to use ! since we filtered above
+          
+          // Use EmployeeName from Employees table (should always be available)
+          const employeeName = emp.EmployeeName || 'Unknown';
+          
+          // All these employees have EmployeeDetails, so we can safely use details
+          return {
+            employeeNo: emp.EmployeeCode || '',
+            employeeId: emp.EmployeeId || null, // Add EmployeeId for salary calculations
+            name: employeeName,
+            department: details?.Department || 'N/A',
+            designation: details?.Designation || 'N/A',
+            fullBasic: details?.BasicSalary || 0,
+            monthlyCTC: details?.MonthlyCTC || 0,
+            annualCTC: details?.AnnualCTC || 0,
+            joinDate: details?.JoiningDate || 'N/A',
+            status: details ? (details.ExitDate === null ? 'Active' : 'Exited') : 'Active',
+            location: details?.BranchLocation || 'N/A',
+          };
+        });
 
-      console.log(`[EmployeeController] ✅ Loaded ${formattedEmployees.length} employees from Employees table (merged with EmployeeDetails when available)`);
+      console.log(`[EmployeeController] ✅ Loaded ${formattedEmployees.length} employees with EmployeeDetails (filtered from ${employees.length} total employees)`);
+      console.log(`[EmployeeController] Total EmployeeDetails records: ${allDetails.length}`);
 
       res.json({
         success: true,
