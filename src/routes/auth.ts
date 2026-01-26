@@ -43,6 +43,12 @@ const setPasswordSchema = Joi.object({
   password: Joi.string().required().min(8).max(128),
 });
 
+const resetPasswordSchema = Joi.object({
+  employeeCode: Joi.string().required().trim(),
+  otp: Joi.string().required().length(6).pattern(/^\d+$/),
+  password: Joi.string().required().min(8).max(128),
+});
+
 const adminLoginSchema = Joi.object({
   username: Joi.string().required().trim(),
   password: Joi.string().required(),
@@ -96,6 +102,16 @@ router.post(
   '/employee/set-password',
   validateRequest(setPasswordSchema, 'body'),
   AuthController.setPassword
+);
+
+/**
+ * POST /api/auth/employee/reset-password
+ * Reset password using OTP (for existing users who forgot password)
+ */
+router.post(
+  '/employee/reset-password',
+  validateRequest(resetPasswordSchema, 'body'),
+  AuthController.resetPassword
 );
 
 /**

@@ -319,6 +319,130 @@ export class AuthController {
   }
 
   /**
+   * POST /api/auth/employee/reset-password
+   * Reset password using OTP (for existing users who forgot password)
+   */
+  static async resetPassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { employeeCode, otp, password } = req.body;
+
+      if (!employeeCode || typeof employeeCode !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Employee code is required',
+        });
+        return;
+      }
+
+      if (!otp || typeof otp !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'OTP is required',
+        });
+        return;
+      }
+
+      if (!password || typeof password !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Password is required',
+        });
+        return;
+      }
+
+      // Verify employee exists
+      const employee = await EmployeeModel.getByCode(employeeCode);
+      if (!employee) {
+        res.status(404).json({
+          success: false,
+          error: 'Employee not found',
+        });
+        return;
+      }
+
+      // Check if user has password (must have password to reset it)
+      const hasPassword = await EmployeePasswordModel.hasPassword(employeeCode);
+      if (!hasPassword) {
+        res.status(400).json({
+          success: false,
+          error: 'Password not set. Please use the set password flow instead.',
+        });
+        return;
+      }
+
+      // Verify OTP (use verifyOTPWithoutConsuming since we'll consume it after password update)
+      const verification = otpService.verifyOTPWithoutConsuming(employeeCode, otp);
+
+      if (!verification.valid) {
+        res.status(400).json({
+          success: false,
+          error: verification.message,
+        });
+        return;
+      }
+
+      // Validate password strength
+      const passwordValidation = validatePasswordStrength(password);
+      if (!passwordValidation.valid) {
+        res.status(400).json({
+          success: false,
+          error: 'Password does not meet requirements',
+          errors: passwordValidation.errors,
+        });
+        return;
+      }
+
+      // Update password (this will also unlock account and reset failed attempts)
+      await EmployeePasswordModel.updatePassword(employeeCode, password);
+
+      // Consume OTP after successful password update
+      otpService.deleteOTP(employeeCode);
+
+      // Generate JWT token
+      const tokenEmployeeCode = employee.EmployeeCode;
+      const tokenEmployeeId = employee.EmployeeId;
+
+      if (!tokenEmployeeCode) {
+        console.error('[AuthController] EmployeeCode is missing from employee object:', employee);
+        res.status(500).json({
+          success: false,
+          error: 'Internal server error - Employee code not found',
+        });
+        return;
+      }
+
+      const tokenPayload = {
+        employeeCode: tokenEmployeeCode,
+        role: 'EMPLOYEE',
+        userId: tokenEmployeeId,
+      };
+
+      const token = generateToken(tokenPayload);
+
+      console.log('[AuthController] Password reset successfully for employee:', tokenEmployeeCode);
+
+      // Return token and employee info
+      res.json({
+        success: true,
+        data: {
+          token,
+          employeeCode: tokenEmployeeCode,
+          role: 'EMPLOYEE',
+        },
+        message: 'Password reset successfully. You are now logged in.',
+      });
+    } catch (error) {
+      const err = error as Error;
+      console.error('[AuthController] Error in resetPassword:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: err.message,
+      });
+    }
+  }
+
+  /**
    * POST /api/auth/employee/send-otp
    * Send OTP to employee's registered mobile number
    */
@@ -473,11 +597,11 @@ export class AuthController {
       // Check if user has password set first
       const hasPassword = await EmployeePasswordModel.hasPassword(inputEmployeeCode);
 
-      // Verify OTP - if password setup is required, don't consume the OTP yet
-      // It will be consumed when setting the password
-      const verification = hasPassword 
-        ? otpService.verifyOTP(inputEmployeeCode, otp) // Consume OTP for users with password
-        : otpService.verifyOTPWithoutConsuming(inputEmployeeCode, otp); // Don't consume for password setup
+      // For password reset flow, we need to check if there's a reset password request
+      // For now, we'll use a query parameter or check the request context
+      // If user has password, don't consume OTP - let resetPassword endpoint handle it
+      // If user doesn't have password, don't consume OTP - let setPassword endpoint handle it
+      const verification = otpService.verifyOTPWithoutConsuming(inputEmployeeCode, otp);
 
       if (!verification.valid) {
         res.status(400).json({
@@ -511,49 +635,18 @@ export class AuthController {
         return;
       }
 
-      // User has password - generate JWT token and log them in
-      // Employee model now returns PascalCase properties via mapToEmployee
-      const tokenEmployeeCode = employee.EmployeeCode;
-      const tokenEmployeeId = employee.EmployeeId;
-      
-      if (!tokenEmployeeCode) {
-        console.error('[AuthController] EmployeeCode is missing from employee object:', employee);
-        res.status(500).json({
-          success: false,
-          error: 'Internal server error - Employee code not found',
-        });
-        return;
-      }
-      
-      console.log('[AuthController] Generating token for employee:', {
-        EmployeeCode: tokenEmployeeCode,
-        EmployeeId: tokenEmployeeId,
-        EmployeeName: employee.EmployeeName,
-        RawEmployee: employee,
-      });
-      
-      const tokenPayload = {
-        employeeCode: tokenEmployeeCode,
-        role: 'EMPLOYEE',
-        userId: tokenEmployeeId,
-      };
-      
-      console.log('[AuthController] Token payload:', tokenPayload);
-      
-      const token = generateToken(tokenPayload);
-      
-      console.log('[AuthController] Token generated, length:', token.length);
-
-      // Return token and employee info
+      // User has password - this means they're trying to reset password via OTP
+      // Don't consume OTP here, let the resetPassword endpoint handle it
+      // Return success without token - frontend should call resetPassword endpoint
       res.json({
         success: true,
         data: {
-          token,
-          employeeCode: tokenEmployeeCode,
-          role: 'EMPLOYEE',
           requiresPasswordSetup: false,
+          hasPassword: true,
+          requiresPasswordReset: true,
+          employeeCode: inputEmployeeCode,
+          message: 'OTP verified. Please proceed to reset your password.',
         },
-        message: 'OTP verified successfully',
       });
     } catch (error) {
       const err = error as Error;
