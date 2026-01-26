@@ -28,10 +28,35 @@ const resendOTPSchema = Joi.object({
   employeeCode: Joi.string().required().trim(),
 });
 
+const checkAuthMethodSchema = Joi.object({
+  employeeCode: Joi.string().required().trim(),
+});
+
+const loginPasswordSchema = Joi.object({
+  employeeCode: Joi.string().required().trim(),
+  password: Joi.string().required().min(1),
+});
+
+const setPasswordSchema = Joi.object({
+  employeeCode: Joi.string().required().trim(),
+  otp: Joi.string().required().length(6).pattern(/^\d+$/),
+  password: Joi.string().required().min(8).max(128),
+});
+
 const adminLoginSchema = Joi.object({
   username: Joi.string().required().trim(),
   password: Joi.string().required(),
 });
+
+/**
+ * POST /api/auth/employee/check-method
+ * Check if employee has password set or needs OTP
+ */
+router.post(
+  '/employee/check-method',
+  validateRequest(checkAuthMethodSchema, 'body'),
+  AuthController.checkAuthMethod
+);
 
 /**
  * POST /api/auth/employee/send-otp
@@ -44,6 +69,16 @@ router.post(
 );
 
 /**
+ * POST /api/auth/employee/login-password
+ * Login with password (for existing users with password)
+ */
+router.post(
+  '/employee/login-password',
+  validateRequest(loginPasswordSchema, 'body'),
+  AuthController.loginWithPassword
+);
+
+/**
  * POST /api/auth/employee/verify-otp
  * Verify OTP and get JWT token
  */
@@ -51,6 +86,16 @@ router.post(
   '/employee/verify-otp',
   validateRequest(verifyOTPSchema, 'body'),
   AuthController.verifyOTP
+);
+
+/**
+ * POST /api/auth/employee/set-password
+ * Set password after OTP verification (for new users)
+ */
+router.post(
+  '/employee/set-password',
+  validateRequest(setPasswordSchema, 'body'),
+  AuthController.setPassword
 );
 
 /**

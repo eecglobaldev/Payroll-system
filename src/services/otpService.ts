@@ -44,7 +44,55 @@ class OTPService {
   }
 
   /**
-   * Verify OTP
+   * Verify OTP without consuming it (for password setup flow)
+   * Returns: { valid: boolean, message: string }
+   */
+  verifyOTPWithoutConsuming(employeeCode: string, otp: string): { valid: boolean; message: string } {
+    const otpData = this.otpStore.get(employeeCode);
+
+    if (!otpData) {
+      return {
+        valid: false,
+        message: 'OTP not found. Please request a new OTP.',
+      };
+    }
+
+    // Check expiry
+    if (Date.now() > otpData.expiresAt) {
+      this.otpStore.delete(employeeCode);
+      return {
+        valid: false,
+        message: 'OTP has expired. Please request a new OTP.',
+      };
+    }
+
+    // Check attempts
+    if (otpData.attempts >= this.MAX_ATTEMPTS) {
+      this.otpStore.delete(employeeCode);
+      return {
+        valid: false,
+        message: 'Maximum verification attempts exceeded. Please request a new OTP.',
+      };
+    }
+
+    // Verify OTP
+    if (otpData.otp !== otp) {
+      otpData.attempts++;
+      return {
+        valid: false,
+        message: `Invalid OTP. ${this.MAX_ATTEMPTS - otpData.attempts} attempts remaining.`,
+      };
+    }
+
+    // OTP is valid - but don't delete it (will be consumed in setPassword)
+    return {
+      valid: true,
+      message: 'OTP verified successfully.',
+    };
+  }
+
+  /**
+   * Verify OTP and consume it (for normal login flow)
    * Returns: { valid: boolean, message: string }
    */
   verifyOTP(employeeCode: string, otp: string): { valid: boolean; message: string } {

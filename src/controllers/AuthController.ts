@@ -7,11 +7,317 @@ import { Request, Response } from 'express';
 import { EmployeeModel } from '../models/EmployeeModel.js';
 import { EmployeeDetailsModel } from '../models/EmployeeDetailsModel.js';
 import { AdminUserModel } from '../models/AdminUserModel.js';
+import { EmployeePasswordModel } from '../models/EmployeePasswordModel.js';
 import { otpService } from '../services/otpService.js';
 import { msg91Service } from '../services/msg91Service.js';
 import { generateToken } from '../utils/jwt.js';
+import { validatePasswordStrength } from '../utils/password.js';
 
 export class AuthController {
+  /**
+   * POST /api/auth/employee/check-method
+   * Check if employee has password set or needs OTP
+   */
+  static async checkAuthMethod(req: Request, res: Response): Promise<void> {
+    try {
+      const { employeeCode } = req.body;
+
+      if (!employeeCode || typeof employeeCode !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Employee code is required',
+        });
+        return;
+      }
+
+      // Validate employee exists and is active
+      const employee = await EmployeeModel.getByCode(employeeCode);
+      if (!employee) {
+        res.status(404).json({
+          success: false,
+          error: 'Employee not found',
+        });
+        return;
+      }
+
+      // Get employee details to check if active
+      const employeeDetails = await EmployeeDetailsModel.getByCode(employeeCode);
+      if (!employeeDetails) {
+        res.status(404).json({
+          success: false,
+          error: 'Employee details not found',
+        });
+        return;
+      }
+
+      // Check if employee is active (no exit date)
+      if (employeeDetails.ExitDate) {
+        res.status(403).json({
+          success: false,
+          error: 'Employee account is inactive',
+        });
+        return;
+      }
+
+      // Check if password exists
+      const hasPassword = await EmployeePasswordModel.hasPassword(employeeCode);
+
+      // Check if account is locked
+      const lockoutInfo = await EmployeePasswordModel.getLockoutInfo(employeeCode);
+
+      res.json({
+        success: true,
+        data: {
+          hasPassword,
+          requiresOTP: !hasPassword,
+          isLocked: lockoutInfo.isLocked,
+          lockedUntil: lockoutInfo.lockedUntil,
+          attemptsRemaining: lockoutInfo.attemptsRemaining,
+          message: hasPassword
+            ? 'Password login available'
+            : 'OTP required for first-time setup',
+        },
+      });
+    } catch (error) {
+      const err = error as Error;
+      console.error('[AuthController] Error in checkAuthMethod:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: err.message,
+      });
+    }
+  }
+
+  /**
+   * POST /api/auth/employee/login-password
+   * Login with password (for existing users)
+   */
+  static async loginWithPassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { employeeCode, password } = req.body;
+
+      if (!employeeCode || typeof employeeCode !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Employee code is required',
+        });
+        return;
+      }
+
+      if (!password || typeof password !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Password is required',
+        });
+        return;
+      }
+
+      // Validate employee exists
+      const employee = await EmployeeModel.getByCode(employeeCode);
+      if (!employee) {
+        res.status(404).json({
+          success: false,
+          error: 'Employee not found',
+        });
+        return;
+      }
+
+      // Check if account is locked
+      const isLocked = await EmployeePasswordModel.isAccountLocked(employeeCode);
+      if (isLocked) {
+        const lockoutInfo = await EmployeePasswordModel.getLockoutInfo(employeeCode);
+        res.status(403).json({
+          success: false,
+          error: 'Account is locked due to multiple failed login attempts',
+          lockedUntil: lockoutInfo.lockedUntil,
+          message: `Account locked. Please try again after ${lockoutInfo.lockedUntil ? new Date(lockoutInfo.lockedUntil).toLocaleString() : 'lockout period expires'}.`,
+        });
+        return;
+      }
+
+      // Verify password
+      const isValid = await EmployeePasswordModel.verifyPassword(employeeCode, password);
+
+      if (!isValid) {
+        // Get updated lockout info after failed attempt
+        const lockoutInfo = await EmployeePasswordModel.getLockoutInfo(employeeCode);
+        
+        // Check if account was just locked
+        if (lockoutInfo.isLocked) {
+          res.status(403).json({
+            success: false,
+            error: 'Invalid password. Account locked due to multiple failed attempts.',
+            lockedUntil: lockoutInfo.lockedUntil,
+            attemptsRemaining: 0,
+          });
+          return;
+        }
+
+        res.status(401).json({
+          success: false,
+          error: 'Invalid password',
+          attemptsRemaining: lockoutInfo.attemptsRemaining,
+          message: `Invalid password. ${lockoutInfo.attemptsRemaining} attempt(s) remaining.`,
+        });
+        return;
+      }
+
+      // Password is valid - generate JWT token
+      const tokenEmployeeCode = employee.EmployeeCode;
+      const tokenEmployeeId = employee.EmployeeId;
+
+      if (!tokenEmployeeCode) {
+        console.error('[AuthController] EmployeeCode is missing from employee object:', employee);
+        res.status(500).json({
+          success: false,
+          error: 'Internal server error - Employee code not found',
+        });
+        return;
+      }
+
+      const tokenPayload = {
+        employeeCode: tokenEmployeeCode,
+        role: 'EMPLOYEE',
+        userId: tokenEmployeeId,
+      };
+
+      const token = generateToken(tokenPayload);
+
+      console.log('[AuthController] Password login successful for employee:', tokenEmployeeCode);
+
+      // Return token and employee info
+      res.json({
+        success: true,
+        data: {
+          token,
+          employeeCode: tokenEmployeeCode,
+          role: 'EMPLOYEE',
+        },
+        message: 'Login successful',
+      });
+    } catch (error) {
+      const err = error as Error;
+      console.error('[AuthController] Error in loginWithPassword:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: err.message,
+      });
+    }
+  }
+
+  /**
+   * POST /api/auth/employee/set-password
+   * Set password after OTP verification (for new users)
+   */
+  static async setPassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { employeeCode, otp, password } = req.body;
+
+      if (!employeeCode || typeof employeeCode !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Employee code is required',
+        });
+        return;
+      }
+
+      if (!otp || typeof otp !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'OTP is required',
+        });
+        return;
+      }
+
+      if (!password || typeof password !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'Password is required',
+        });
+        return;
+      }
+
+      // Verify OTP first
+      const verification = otpService.verifyOTP(employeeCode, otp);
+
+      if (!verification.valid) {
+        res.status(400).json({
+          success: false,
+          error: verification.message,
+        });
+        return;
+      }
+
+      // Validate password strength
+      const passwordValidation = validatePasswordStrength(password);
+      if (!passwordValidation.valid) {
+        res.status(400).json({
+          success: false,
+          error: 'Password does not meet requirements',
+          errors: passwordValidation.errors,
+        });
+        return;
+      }
+
+      // Validate employee exists
+      const employee = await EmployeeModel.getByCode(employeeCode);
+      if (!employee) {
+        res.status(404).json({
+          success: false,
+          error: 'Employee not found',
+        });
+        return;
+      }
+
+      // Create password
+      await EmployeePasswordModel.createPassword(employeeCode, password);
+
+      // Generate JWT token
+      const tokenEmployeeCode = employee.EmployeeCode;
+      const tokenEmployeeId = employee.EmployeeId;
+
+      if (!tokenEmployeeCode) {
+        console.error('[AuthController] EmployeeCode is missing from employee object:', employee);
+        res.status(500).json({
+          success: false,
+          error: 'Internal server error - Employee code not found',
+        });
+        return;
+      }
+
+      const tokenPayload = {
+        employeeCode: tokenEmployeeCode,
+        role: 'EMPLOYEE',
+        userId: tokenEmployeeId,
+      };
+
+      const token = generateToken(tokenPayload);
+
+      console.log('[AuthController] Password set successfully for employee:', tokenEmployeeCode);
+
+      // Return token and employee info
+      res.json({
+        success: true,
+        data: {
+          token,
+          employeeCode: tokenEmployeeCode,
+          role: 'EMPLOYEE',
+        },
+        message: 'Password set successfully. You are now logged in.',
+      });
+    } catch (error) {
+      const err = error as Error;
+      console.error('[AuthController] Error in setPassword:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: err.message,
+      });
+    }
+  }
+
   /**
    * POST /api/auth/employee/send-otp
    * Send OTP to employee's registered mobile number
@@ -164,8 +470,14 @@ export class AuthController {
         return;
       }
 
-      // Verify OTP
-      const verification = otpService.verifyOTP(inputEmployeeCode, otp);
+      // Check if user has password set first
+      const hasPassword = await EmployeePasswordModel.hasPassword(inputEmployeeCode);
+
+      // Verify OTP - if password setup is required, don't consume the OTP yet
+      // It will be consumed when setting the password
+      const verification = hasPassword 
+        ? otpService.verifyOTP(inputEmployeeCode, otp) // Consume OTP for users with password
+        : otpService.verifyOTPWithoutConsuming(inputEmployeeCode, otp); // Don't consume for password setup
 
       if (!verification.valid) {
         res.status(400).json({
@@ -185,7 +497,21 @@ export class AuthController {
         return;
       }
 
-      // Generate JWT token
+      if (!hasPassword) {
+        // User doesn't have password - return flag to indicate password setup required
+        // OTP is still valid and will be consumed in setPassword endpoint
+        res.json({
+          success: true,
+          data: {
+            requiresPasswordSetup: true,
+            employeeCode: inputEmployeeCode,
+            message: 'OTP verified. Please set your password.',
+          },
+        });
+        return;
+      }
+
+      // User has password - generate JWT token and log them in
       // Employee model now returns PascalCase properties via mapToEmployee
       const tokenEmployeeCode = employee.EmployeeCode;
       const tokenEmployeeId = employee.EmployeeId;
@@ -225,6 +551,7 @@ export class AuthController {
           token,
           employeeCode: tokenEmployeeCode,
           role: 'EMPLOYEE',
+          requiresPasswordSetup: false,
         },
         message: 'OTP verified successfully',
       });
