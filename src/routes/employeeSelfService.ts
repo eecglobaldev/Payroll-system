@@ -50,5 +50,12 @@ router.get('/attendance', EmployeeSelfServiceController.getAttendance);
  */
 router.get('/salary/pdf', EmployeeSelfServiceController.downloadSalaryPdf);
 
+/**
+ * GET /api/employee/salary/payslip?month=YYYY-MM
+ * Download payslip PDF for current employee (READ-ONLY from MonthlySalary)
+ * Blocks download if salary is on HOLD
+ */
+router.get('/salary/payslip', EmployeeSelfServiceController.downloadPayslipPdf);
+
 export default router;
 

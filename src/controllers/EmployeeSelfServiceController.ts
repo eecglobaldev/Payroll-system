@@ -599,5 +599,97 @@ export class EmployeeSelfServiceController {
       });
     }
   }
+
+  /**
+   * GET /api/employee/salary/payslip?month=YYYY-MM
+   * Download payslip PDF for current employee (READ-ONLY from MonthlySalary)
+   * 
+   * SECURITY: Employee can only download their own payslip PDF
+   * NO CALCULATION: Only reads from stored MonthlySalary table
+   * HOLD CHECK: Blocks download if salary is on HOLD
+   */
+  static async downloadPayslipPdf(req: Request, res: Response): Promise<void> {
+    try {
+      const employeeCode = req.employeeCode;
+      const month = req.query.month as string || new Date().toISOString().slice(0, 7);
+      
+      if (!employeeCode || !req.userId) {
+        res.status(401).json({
+          success: false,
+          error: 'Unauthorized',
+        });
+        return;
+      }
+
+      // Validate month format
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid month format. Use YYYY-MM',
+        });
+        return;
+      }
+
+      // Read salary from MonthlySalary table (NO CALCULATION)
+      // IMPORTANT: Only fetch FINALIZED salaries (Status = 1)
+      // Employees must NOT download DRAFT salaries
+      const { MonthlySalaryModel } = await import('../models/MonthlySalaryModel.js');
+      const salaryRecord = await MonthlySalaryModel.getSalary(employeeCode, month, true);
+
+      // If salary not found or not finalized, return NOT_FINALIZED status
+      if (!salaryRecord) {
+        res.status(404).json({
+          success: false,
+          status: 'NOT_FINALIZED',
+          message: 'Salary not finalized yet. Please contact HR.',
+        });
+        return;
+      }
+
+      // Double-check Status = 1 (FINALIZED) - additional security check
+      if (salaryRecord.Status !== 1) {
+        res.status(403).json({
+          success: false,
+          status: 'NOT_FINALIZED',
+          message: 'Salary not finalized yet.',
+        });
+        return;
+      }
+
+      // Check if salary is on HOLD - block PDF download
+      if (salaryRecord.IsHeld) {
+        res.status(403).json({
+          success: false,
+          status: 'HOLD',
+          message: 'Salary is on HOLD. Please contact HR.',
+          holdReason: salaryRecord.HoldReason,
+        });
+        return;
+      }
+
+      // Generate payslip PDF from stored salary data
+      const { generatePayslipPdf } = await import('../services/salaryPdfService.js');
+      const pdfBuffer = await generatePayslipPdf(salaryRecord);
+
+      // Set response headers for PDF download
+      const monthName = new Date(`${month}-01`).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+      const fileName = `Payslip_${employeeCode}_${monthName.replace(/\s+/g, '_')}.pdf`;
+      
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', pdfBuffer.length.toString());
+      
+      // Send PDF buffer
+      res.send(pdfBuffer);
+    } catch (error) {
+      const err = error as Error;
+      console.error('[EmployeeSelfService] Error generating payslip PDF:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: err.message,
+      });
+    }
+  }
 }
 

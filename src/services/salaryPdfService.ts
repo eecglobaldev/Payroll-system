@@ -14,6 +14,9 @@ import { MonthlySalary } from '../models/MonthlySalaryModel.js';
 import { EmployeeModel } from '../models/EmployeeModel.js';
 import { EmployeeDetailsModel } from '../models/EmployeeDetailsModel.js';
 import { calculateMonthlyHours } from './payroll.js';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 interface EmployeeInfo {
   name: string;
@@ -893,5 +896,468 @@ function formatMonth(monthStr: string): string {
   } catch {
     return monthStr;
   }
+}
+
+/**
+ * Convert number to words (Indian format)
+ * Example: 35910 -> "Thirty Five Thousand Nine Hundred Ten"
+ */
+function numberToWords(num: number): string {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+    'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  if (num === 0) return 'Zero';
+
+  function convertHundreds(n: number): string {
+    let result = '';
+    if (n >= 100) {
+      result += ones[Math.floor(n / 100)] + ' Hundred';
+      n %= 100;
+      if (n > 0) result += ' ';
+    }
+    if (n >= 20) {
+      result += tens[Math.floor(n / 10)];
+      n %= 10;
+      if (n > 0) result += ' ' + ones[n];
+    } else if (n > 0) {
+      result += ones[n];
+    }
+    return result;
+  }
+
+  let words = '';
+  const crores = Math.floor(num / 10000000);
+  if (crores > 0) {
+    words += convertHundreds(crores) + ' Crore ';
+    num %= 10000000;
+  }
+
+  const lakhs = Math.floor(num / 100000);
+  if (lakhs > 0) {
+    words += convertHundreds(lakhs) + ' Lakh ';
+    num %= 100000;
+  }
+
+  const thousands = Math.floor(num / 1000);
+  if (thousands > 0) {
+    words += convertHundreds(thousands) + ' Thousand ';
+    num %= 1000;
+  }
+
+  if (num > 0) {
+    words += convertHundreds(num);
+  }
+
+  return words.trim();
+}
+
+/**
+ * Generate payslip PDF matching the traditional payslip format
+ * Uses the same data source as generateSalaryPdf but formats it as a payslip
+ */
+export async function generatePayslipPdf(
+  monthlySalary: MonthlySalary,
+  employeeInfo?: EmployeeInfo
+): Promise<Buffer> {
+  // Fetch employee info if not provided
+  if (!employeeInfo) {
+    const employee = await EmployeeModel.getByCode(monthlySalary.EmployeeCode);
+    const employeeDetails = await EmployeeDetailsModel.getByCode(monthlySalary.EmployeeCode);
+    
+    if (!employee) {
+      throw new Error(`Employee ${monthlySalary.EmployeeCode} not found`);
+    }
+    
+    employeeInfo = {
+      name: employee.EmployeeName,
+      employeeCode: employee.EmployeeCode,
+      department: employeeDetails?.Department || null,
+      designation: employeeDetails?.Designation || null,
+      branchLocation: employeeDetails?.BranchLocation || null,
+      joinDate: employeeDetails?.JoiningDate || null,
+      exitDate: employeeDetails?.ExitDate || null,
+      basicSalary: employeeDetails?.BasicSalary || null,
+    };
+  }
+
+  // Get employee details for bank information
+  const employeeDetails = await EmployeeDetailsModel.getByCode(monthlySalary.EmployeeCode);
+  const bankName = 'N/A'; // Default or from DB if available
+  const bankAccountNo = employeeDetails?.BankAccNo || '';
+  
+  // Parse breakdown JSON to get incentives and adjustments
+  let breakdown: SalaryBreakdown = {};
+  if (monthlySalary.BreakdownJson) {
+    try {
+      const storedData = JSON.parse(monthlySalary.BreakdownJson);
+      breakdown = storedData.breakdown || {};
+    } catch (err) {
+      console.warn('[PayslipPdfService] Failed to parse BreakdownJson:', err);
+    }
+  }
+  
+  // Create PDF document
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  
+  // Helper function to format currency
+  const formatCurrency = (amount: number | null | undefined): string => {
+    if (amount === null || amount === undefined) return '0';
+    return amount.toLocaleString('en-IN', { 
+      minimumFractionDigits: 0, 
+      maximumFractionDigits: 0 
+    });
+  };
+
+  // Define margins for outer border
+  const marginLeft = 10;
+  const marginRight = 10;
+  const marginTop = 10;
+  const contentWidth = pageWidth - marginLeft - marginRight;
+  const contentStartX = marginLeft;
+  
+  // Note: Outer border will be drawn at the end, just above the disclaimer
+
+  // Company Header with Logo
+  const headerY = marginTop + 7;
+  
+  // Load and add logo
+  let logoWidth = 0;
+  let logoHeight = 0;
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const logoPath = join(__dirname, '../../Screenshot 2026-01-26 175158.png');
+    const logoData = readFileSync(logoPath);
+    const logoBase64 = logoData.toString('base64');
+    const logoDataUri = `data:image/png;base64,${logoBase64}`;
+    
+    // Add logo to the left of company name
+    logoWidth = 25; // Logo width in mm
+    logoHeight = 18; // Logo height in mm (maintains aspect ratio)
+    const logoX = marginLeft + 4;
+    const logoY = headerY - 3; // Position logo to align with text
+    
+    doc.addImage(logoDataUri, 'PNG', logoX, logoY, logoWidth, logoHeight);
+  } catch (error) {
+    console.warn('[PayslipPdfService] Could not load logo:', error);
+    // Continue without logo if file not found
+  }
+  
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  // Adjust company name position to account for logo (with spacing)
+  // const companyNameX = marginLeft + 4 + logoWidth + 5; // Start after logo with 5mm spacing
+  doc.text('ENBEE EDUCATION CENTER PVT LTD', pageWidth / 2, headerY, { align: 'center' });
+  
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text('EEC, 2ND FLOOR ABOVE GSRTC BUS STATION, NIZAMPURA, VADODARA', pageWidth / 2, headerY + 6, { align: 'center' });
+  
+  // Payslip title
+  const monthName = formatMonth(monthlySalary.Month);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Payslip for the month of ${monthName}`, pageWidth / 2, headerY + 12, { align: 'center' });
+  
+  // Draw header line
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.5);
+  doc.line(contentStartX + 4, headerY + 16, pageWidth - marginRight - 4, headerY + 16);
+
+  // Employee Details Section
+  let currentY = headerY + 25;
+  
+  // Left column - Employee Details (adjusted for border margin)
+  const leftColX = contentStartX + 4;
+  const leftValueX = leftColX + 36; // Fixed position for values to ensure alignment
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Name:', leftColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text(employeeInfo.name.toUpperCase(), leftValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Joining Date:', leftColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  const joinDate = employeeInfo.joinDate ? formatDate(employeeInfo.joinDate) : 'N/A';
+  doc.text(joinDate, leftValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Designation:', leftColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text((employeeInfo.designation || 'N/A').toUpperCase(), leftValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Department:', leftColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text((employeeInfo.department || 'N/A').toUpperCase(), leftValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Location:', leftColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text((employeeInfo.branchLocation || 'N/A').toUpperCase(), leftValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Effective Work Days:', leftColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  const totalDays = monthlySalary.PaidDays || 0;
+  doc.text(String(Math.round(totalDays)), leftValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('LOP (Loss of Pay):', leftColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  const lopDays = monthlySalary.AbsentDays || 0;
+  doc.text(String(Math.round(lopDays)), leftValueX, currentY);
+
+  // Right column - Bank Details (adjusted for border margin)
+  const rightColX = contentStartX + 100;
+  const rightValueX = rightColX + 35; // Fixed position for values to ensure alignment
+  currentY = headerY + 25;
+  
+  doc.setFont('helvetica', 'bold');
+  doc.text('Employee No:', rightColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text(employeeInfo.employeeCode, rightValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Bank Name:', rightColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text(bankName || 'N/A', rightValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Bank Account No:', rightColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text(bankAccountNo || 'N/A', rightValueX, currentY);
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('PAN Number:', rightColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text('N/A', rightValueX, currentY); // PAN not in DB
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('PF No:', rightColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text('', rightValueX, currentY); // PF not in DB
+  
+  currentY += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.text('PF UAN:', rightColX, currentY);
+  doc.setFont('helvetica', 'normal');
+  doc.text('', rightValueX, currentY); // PF UAN not in DB
+
+  // Earnings and Deductions Tables (Side by side)
+  currentY += 10;
+  const tablesStartY = currentY;
+  
+  // Calculate Basic (Full and Actual)
+  // Full = Full month's basic salary
+  const basicFull = employeeInfo.basicSalary || 0;
+  // Actual = Prorated basic salary based on paid days
+  const basicActual = monthlySalary.BaseSalary || 0;
+  
+  // Calculate Overtime (same for Full and Actual)
+  const overtimeFull = monthlySalary.OvertimeAmount || 0;
+  const overtimeActual = monthlySalary.OvertimeAmount || 0;
+  
+  // Build earnings body with adjustments
+  const earningsBody: string[][] = [
+    ['BASIC', formatCurrency(basicFull), formatCurrency(basicActual)],
+  ];
+  
+  // Add overtime if available
+  if (overtimeFull > 0 || overtimeActual > 0) {
+    earningsBody.push(['OVERTIME', formatCurrency(overtimeFull), formatCurrency(overtimeActual)]);
+  }
+  
+  // Add incentive if available (in Actual column only, as it's an addition)
+  if (breakdown.incentiveAmount && breakdown.incentiveAmount > 0) {
+    earningsBody.push(['INCENTIVE', formatCurrency(0), formatCurrency(breakdown.incentiveAmount)]);
+  }
+  
+  // Track adjustment additions for total calculation
+  let totalAdjustmentAdditions = 0;
+  
+  // Add adjustment additions (reimbursements, etc.) - these go in Actual column
+  if (breakdown.adjustmentDetails && breakdown.adjustmentDetails.length > 0) {
+    breakdown.adjustmentDetails
+      .filter(adj => adj.type === 'ADDITION' && adj.category !== 'INCENTIVE')
+      .forEach(adj => {
+        const categoryLabels: Record<string, string> = {
+          'REIMBURSEMENT': 'REIMBURSEMENT',
+          'T_SHIRT': 'T-SHIRT',
+          'ADVANCE': 'ADVANCE',
+        };
+        const label = categoryLabels[adj.category] || adj.category;
+        earningsBody.push([label, formatCurrency(0), formatCurrency(adj.amount)]);
+        totalAdjustmentAdditions += adj.amount;
+      });
+  }
+  
+  // Calculate total earnings (including adjustments)
+  // Use GrossSalary for Actual total as it already includes all additions (basic + overtime + incentive + adjustment additions)
+  const totalEarningsFull = basicFull + overtimeFull;
+  // GrossSalary should already include all earnings components, but calculate manually if needed
+  const calculatedTotalEarningsActual = basicActual + overtimeActual + (breakdown.incentiveAmount || 0) + totalAdjustmentAdditions;
+  const totalEarningsActual = monthlySalary.GrossSalary || calculatedTotalEarningsActual;
+  
+  // Add total row
+  earningsBody.push(['Total Earnings: INR.', formatCurrency(totalEarningsFull), formatCurrency(totalEarningsActual)]);
+
+  // Build deductions body with adjustments
+  const deductionsBody: string[][] = [];
+  
+  // Add Professional Tax if available
+  if (monthlySalary.ProfessionalTax && monthlySalary.ProfessionalTax > 0) {
+    deductionsBody.push(['PROF TAX', formatCurrency(monthlySalary.ProfessionalTax)]);
+  }
+  
+  // Add TDS if available
+  if (monthlySalary.TdsDeduction && monthlySalary.TdsDeduction > 0) {
+    deductionsBody.push(['TDS', formatCurrency(monthlySalary.TdsDeduction)]);
+  }
+  
+  // Add adjustment deductions (T-Shirt, Advance, etc.)
+  if (breakdown.adjustmentDetails && breakdown.adjustmentDetails.length > 0) {
+    breakdown.adjustmentDetails
+      .filter(adj => adj.type === 'DEDUCTION')
+      .forEach(adj => {
+        const categoryLabels: Record<string, string> = {
+          'T_SHIRT': 'T-SHIRT',
+          'ADVANCE': 'ADVANCE',
+          'REIMBURSEMENT': 'REIMBURSEMENT',
+        };
+        const label = categoryLabels[adj.category] || adj.category;
+        deductionsBody.push([label, formatCurrency(adj.amount)]);
+      });
+  }
+  
+  // Add empty row to push total deductions to 3rd row
+  deductionsBody.push(['', '']);
+  
+  // Add total deductions row (now on 3rd row)
+  deductionsBody.push(['Total Deductions: INR.', formatCurrency(monthlySalary.TotalDeductions || 0)]);
+
+  // Merge both tables into one - create combined body with side-by-side structure
+  // Calculate table width to fit within border
+  const innerContentLeft = marginLeft + 4;
+  const innerContentRight = pageWidth - marginRight - 4;
+  const availableWidth = innerContentRight - innerContentLeft;
+  const tableSpacing = 8; // Space between earnings and deductions sections
+  const earningsSectionWidth = (availableWidth - tableSpacing) / 2;
+  const deductionsSectionWidth = (availableWidth - tableSpacing) / 2;
+  
+  // Find max rows to align both sections
+  const maxRows = Math.max(earningsBody.length, deductionsBody.length);
+  
+  // Create merged table body with side-by-side structure
+  const mergedTableBody: string[][] = [];
+  
+  for (let i = 0; i < maxRows; i++) {
+    const earningsRow = earningsBody[i] || ['', '', ''];
+    const deductionsRow = deductionsBody[i] || ['', ''];
+    
+    // Combine into one row: Earnings columns + Deductions columns
+    mergedTableBody.push([
+      earningsRow[0] || '', // Earnings label
+      earningsRow[1] || '', // Earnings Full
+      earningsRow[2] || '', // Earnings Actual
+      deductionsRow[0] || '', // Deductions label
+      deductionsRow[1] || ''  // Deductions Actual
+    ]);
+  }
+  
+  // Merged table with Earnings and Deductions side by side
+  autoTable(doc, {
+    startY: tablesStartY,
+    head: [['Earnings', 'Full', 'Actual', 'Deductions', 'Actual']],
+    body: mergedTableBody,
+    theme: 'plain',
+    headStyles: { 
+      fillColor: [240, 240, 240],
+      textColor: [0, 0, 0],
+      fontStyle: 'bold',
+      fontSize: 9,
+      lineWidth: 0.5,
+      lineColor: [0, 0, 0],
+      cellPadding: { top: 2, bottom: 2, left: 4, right: 4 }
+    },
+    bodyStyles: {
+      fontSize: 9,
+      lineWidth: 0.1,
+      lineColor: [0, 0, 0],
+      cellPadding: { top: 2, bottom: 2, left: 4, right: 4 }
+    },
+    didParseCell: function(data: any) {
+      // Make total rows bold
+      const earningsTotalIndex = earningsBody.length - 1;
+      const deductionsTotalIndex = deductionsBody.length - 1;
+      
+      if (data.row.index === earningsTotalIndex || data.row.index === deductionsTotalIndex) {
+        data.cell.styles.fontStyle = 'bold';
+      }
+      
+      // Add vertical separator between Earnings and Deductions sections
+      if (data.column.index === 2) {
+        data.cell.styles.lineWidth = 0.5;
+        data.cell.styles.lineColor = [0, 0, 0];
+      }
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: earningsSectionWidth * 0.5 }, // Earnings label
+      1: { halign: 'right', cellWidth: earningsSectionWidth * 0.25 }, // Earnings Full
+      2: { halign: 'right', cellWidth: earningsSectionWidth * 0.25 }, // Earnings Actual
+      3: { fontStyle: 'bold', cellWidth: deductionsSectionWidth * 0.65 }, // Deductions label
+      4: { halign: 'right', cellWidth: deductionsSectionWidth * 0.35 }  // Deductions Actual
+    },
+    margin: { left: innerContentLeft, right: marginRight + 4 },
+    tableWidth: availableWidth,
+  });
+
+  // Net Pay Section
+  const finalY = Math.max((doc as any).lastAutoTable.finalY, tablesStartY + 30);
+  currentY = finalY + 10;
+  
+  const netPay = monthlySalary.NetSalary || 0;
+  const netPayWords = numberToWords(Math.round(netPay));
+
+  currentY -= 3;
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Net Pay for the month (Total Earnings - Total Deductions):', leftColX, currentY);
+  doc.text(formatCurrency(netPay), pageWidth - marginRight - 65, currentY, { align: 'right' });
+  
+  currentY += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.text(`(Rupees ${netPayWords} Only)`, leftColX, currentY);
+
+  // Disclaimer
+  currentY += 15;
+  const disclaimerY = currentY;
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(100, 100, 100);
+  doc.text('This is a system generated payslip and does not require signature.', pageWidth / 2, currentY, { align: 'center' });
+
+  // Draw outer border around entire payslip (ending just above disclaimer)
+  const borderBottomY = disclaimerY - 5; // 5mm above disclaimer
+  const borderHeight = borderBottomY - marginTop;
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.5);
+  doc.rect(marginLeft, marginTop, contentWidth, borderHeight);
+
+  // Return PDF as buffer
+  return Buffer.from(doc.output('arraybuffer'));
 }
 
