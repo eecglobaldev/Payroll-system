@@ -118,7 +118,7 @@ export class SalaryController {
       if (!isNaN(userIdNum) && userIdNum > 0) {
         // userId is a number (EmployeeId), need to get EmployeeCode
         const { EmployeeModel } = await import('../models/EmployeeModel.js');
-        const employee = await EmployeeModel.getById(userIdNum);
+        const employee = await EmployeeModel.getByCode(String(userId));
         if (!employee) {
           res.status(404).json({
             success: false,

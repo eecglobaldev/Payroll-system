@@ -13,7 +13,7 @@ export class ShiftModel {
    */
   static async getByName(shiftName: string): Promise<Shift | null> {
     try {
-      const sqlQuery = `
+      let sqlQuery = `
         SELECT 
           shiftid,
           shiftname,
@@ -32,13 +32,50 @@ export class ShiftModel {
         WHERE shiftname = @shiftName
       `;
 
-      const result = await query<any>(sqlQuery, { shiftName });
+      let result = await query<any>(sqlQuery, { shiftName });
+      
+      // If not found, try case-insensitive match
+      if (result.recordset.length === 0) {
+        console.log(`[ShiftModel] Case-sensitive match failed for "${shiftName}", trying case-insensitive...`);
+        sqlQuery = `
+          SELECT 
+            shiftid,
+            shiftname,
+            starttime,
+            endtime,
+            issplitshift,
+            starttime_1,
+            endtime_1,
+            starttime_2,
+            endtime_2,
+            workhours,
+            latethresholdminutes,
+            createdat,
+            updatedat
+          FROM employee_shifts
+          WHERE LOWER(TRIM(shiftname)) = LOWER(TRIM(@shiftName))
+        `;
+        result = await query<any>(sqlQuery, { shiftName });
+      }
       
       if (result.recordset.length === 0) {
+        console.warn(`[ShiftModel] Shift "${shiftName}" not found in database`);
         return null;
       }
 
-      return this.mapToShift(result.recordset[0]);
+      const rawRow = result.recordset[0];
+      // Log raw values for debugging
+      console.log(`[ShiftModel] Raw shift data for "${shiftName}":`, {
+        issplitshift: rawRow.issplitshift,
+        IsSplitShift: rawRow.IsSplitShift,
+        starttime: rawRow.starttime,
+        endtime: rawRow.endtime,
+        workhours: rawRow.workhours
+      });
+      
+      const shift = this.mapToShift(rawRow);
+      console.log(`[ShiftModel] Mapped shift "${shift.ShiftName}": IsSplitShift=${shift.IsSplitShift}, StartTime=${shift.StartTime}, EndTime=${shift.EndTime}, WorkHours=${shift.WorkHours}`);
+      return shift;
     } catch (error: any) {
       console.error('[ShiftModel] Error fetching shift by name:', error.message);
       throw error;
@@ -160,8 +197,30 @@ export class ShiftModel {
           // Only log warning once per shift
           if (!this.warnedShifts.has(cacheKey)) {
             console.warn(`[ShiftModel] Split shift "${cacheKey}" has missing or invalid slot times`);
+            console.warn(`[ShiftModel] StartTime_1: ${shift.StartTime_1}, EndTime_1: ${shift.EndTime_1}, StartTime_2: ${shift.StartTime_2}, EndTime_2: ${shift.EndTime_2}`);
+            console.warn(`[ShiftModel] Falling back to normal shift parsing using StartTime/EndTime`);
             this.warnedShifts.add(cacheKey);
           }
+          
+          // Fall back to normal shift if split shift times are missing
+          // Use StartTime and EndTime as a normal shift
+          const start = parseTime(shift.StartTime);
+          const end = parseTime(shift.EndTime);
+          
+          if (start && end) {
+            const result = {
+              startHour: start.hour,
+              startMinute: start.minute,
+              endHour: end.hour,
+              endMinute: end.minute,
+              workHours: shift.WorkHours,
+              lateThresholdMinutes: shift.LateThresholdMinutes,
+              isSplitShift: false, // Treat as normal shift since split times are missing
+            };
+            this.shiftTimingCache.set(cacheKey, result);
+            return result;
+          }
+          
           this.shiftTimingCache.set(cacheKey, null);
           return null;
         }
@@ -229,12 +288,37 @@ export class ShiftModel {
    * Helper: Map database row to Shift interface
    */
   private static mapToShift(row: any): Shift {
+    // Helper to safely convert to boolean (handles 0, 1, '0', '1', true, false, 't', 'f')
+    // PostgreSQL can return booleans as true/false, 1/0, 't'/'f', or 'true'/'false'
+    const toBoolean = (value: any): boolean => {
+      if (value === undefined || value === null) return false;
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value !== 0 && value !== 0.0;
+      if (typeof value === 'string') {
+        const lower = value.toLowerCase().trim();
+        // Handle PostgreSQL boolean string representations
+        // Explicitly check for false values first
+        if (lower === 'false' || lower === '0' || lower === 'f' || lower === 'no' || lower === '') {
+          return false;
+        }
+        // Then check for true values
+        return lower === 'true' || lower === '1' || lower === 't' || lower === 'yes';
+      }
+      return Boolean(value);
+    };
+    
+    // Get IsSplitShift value - check lowercase first (PostgreSQL default), then PascalCase
+    // Use nullish coalescing to properly handle 0 values (0 is falsy but valid)
+    const isSplitShiftValue = row.issplitshift !== undefined && row.issplitshift !== null 
+      ? row.issplitshift 
+      : (row.IsSplitShift !== undefined && row.IsSplitShift !== null ? row.IsSplitShift : false);
+    
     return {
       ShiftId: row.shiftid || row.ShiftId,
       ShiftName: row.shiftname || row.ShiftName,
       StartTime: row.starttime || row.StartTime, // TIME format from PostgreSQL
       EndTime: row.endtime || row.EndTime, // TIME format from PostgreSQL
-      IsSplitShift: Boolean(row.issplitshift || row.IsSplitShift),
+      IsSplitShift: toBoolean(isSplitShiftValue), // Properly handle 0/false values
       StartTime_1: row.starttime_1 || row.StartTime_1 || null,
       EndTime_1: row.endtime_1 || row.EndTime_1 || null,
       StartTime_2: row.starttime_2 || row.StartTime_2 || null,
