@@ -122,6 +122,107 @@ export async function getMonthlyAttendance(
 }
 
 /**
+ * Calculate attendance for an arbitrary date range (e.g. "after 25th": 26th of month to today).
+ * Used by employee self-service to show attendance after the payroll cycle end.
+ */
+export async function calculateAttendanceForDateRange(
+  userId: number | string,
+  start: string,
+  end: string,
+  joinDateStr?: string,
+  exitDateStr?: string
+): Promise<{ dailyBreakdown: DailyBreakdown[]; fullDays: number; halfDays: number; absentDays: number; lateDays: number; earlyExits: number; totalWorkedHours: number }> {
+  const { AttendanceModel } = await import('../models/AttendanceModel.js');
+  const userIdStr = String(userId);
+  const logs = await AttendanceModel.getByEmployeeAndDateRange(userIdStr, start, end);
+  const groupedLogs = groupByDate(logs);
+
+  let shiftAssignments: any[] = [];
+  let employeeDetails: any = null;
+  try {
+    const { EmployeeShiftAssignmentModel } = await import('../models/EmployeeShiftAssignmentModel.js');
+    const { EmployeeDetailsModel } = await import('../models/EmployeeDetailsModel.js');
+    shiftAssignments = await EmployeeShiftAssignmentModel.getAssignmentsForEmployee(userIdStr, start, end);
+    employeeDetails = await EmployeeDetailsModel.getByCode(userIdStr);
+  } catch (err: any) {
+    console.warn(`[Payroll] calculateAttendanceForDateRange: could not pre-fetch shifts/details: ${err.message}`);
+  }
+
+  const effectiveStart = joinDateStr && joinDateStr > start ? joinDateStr : start;
+  const effectiveEnd = exitDateStr && exitDateStr < end ? exitDateStr : end;
+  const startDate = createLocalDate(start);
+  const endDate = createLocalDate(end);
+  const totalDays = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+  const dailyBreakdown: DailyBreakdown[] = [];
+  let fullDays = 0;
+  let halfDays = 0;
+  let absentDays = 0;
+  let lateDays = 0;
+  let earlyExits = 0;
+  let totalWorkedHours = 0;
+
+  const currentDate = new Date(startDate);
+  for (let d = 0; d < totalDays; d++) {
+    const dateStr = formatDate(currentDate);
+    const isWithinEffectiveRange = dateStr >= effectiveStart && dateStr <= effectiveEnd;
+    const dayShiftTiming = await resolveShiftForDate(userIdStr, dateStr, shiftAssignments, employeeDetails);
+    const dayLogs = isWithinEffectiveRange ? (groupedLogs[dateStr] || []) : [];
+    const dayStats = calculateDayHours(dayLogs, dayShiftTiming);
+
+    if (!isWithinEffectiveRange) {
+      (dayStats as any).status = 'not-active';
+    }
+
+    dailyBreakdown.push({ date: dateStr, ...dayStats });
+
+    if (isWithinEffectiveRange) {
+      const isSunday = getDay(currentDate) === 0;
+      if (!isSunday) {
+        totalWorkedHours += dayStats.totalHours;
+        if (dayStats.status === 'full-day') fullDays++;
+        if (dayStats.status === 'half-day') halfDays++;
+        if (dayStats.status === 'absent') absentDays++;
+        if (dayStats.isLate && (dayStats.status === 'full-day' || dayStats.status === 'half-day')) lateDays++;
+        if (dayStats.isEarlyExit) earlyExits++;
+      }
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  try {
+    const { AttendanceRegularizationModel } = await import('../models/AttendanceRegularizationModel.js');
+    const regularizations = await AttendanceRegularizationModel.getRegularizationsByDateRange(userIdStr, start, end);
+    for (const reg of regularizations) {
+      const regDateStr = formatDate(new Date(reg.RegularizationDate));
+      const dayEntry = dailyBreakdown.find((x: any) => x.date === regDateStr);
+      if (dayEntry) {
+        const originalStatus = dayEntry.status;
+        const regularizedStatus = reg.RegularizedStatus || 'full-day';
+        (dayEntry as any).originalStatus = originalStatus;
+        (dayEntry as any).isRegularized = true;
+        dayEntry.status = regularizedStatus as 'half-day' | 'full-day';
+        if (originalStatus === 'absent') absentDays--;
+        else if (originalStatus === 'half-day') halfDays--;
+        if (regularizedStatus === 'full-day') fullDays++;
+        else if (regularizedStatus === 'half-day') halfDays++;
+        if (dayEntry.isLate && (originalStatus === 'absent' || originalStatus === 'half-day')) lateDays--;
+      }
+    }
+  } catch (_) {}
+
+  return {
+    dailyBreakdown,
+    fullDays,
+    halfDays,
+    absentDays,
+    lateDays,
+    earlyExits,
+    totalWorkedHours,
+  };
+}
+
+/**
  * Group attendance logs by date
  */
 export function groupByDate(logs: AttendanceLog[]): Record<string, AttendanceLog[]> {

@@ -484,12 +484,57 @@ export class EmployeeSelfServiceController {
         totalWorkedHours: attendance.totalWorkedHours,
       };
 
+      // When viewing current month, also return "after 25th" breakdown (26th of month → today) for display below the cycle
+      let after25Breakdown: typeof enrichedDailyBreakdown | undefined;
+      let after25Summary: typeof summary | undefined;
+      try {
+        const { today, currentMonth } = await import('../utils/date.js');
+        const after25Start = `${month}-26`;
+        const after25End = today();
+        const isCurrentMonth = month === currentMonth();
+        if (isCurrentMonth && after25Start <= after25End) {
+          const after25 = await payroll.calculateAttendanceForDateRange(
+            employeeNo,
+            after25Start,
+            after25End,
+            employeeDetails?.JoiningDate || undefined,
+            employeeDetails?.ExitDate || undefined
+          );
+          const enrichedAfter25 = after25.dailyBreakdown.map(day => {
+            const dayDate = day.date.split('T')[0];
+            const isPaidLeave = paidLeaveDates.some(pl => (pl.date.split('T')[0] || pl.date) === dayDate);
+            const isCasualLeave = casualLeaveDates.some(cl => (cl.date.split('T')[0] || cl.date) === dayDate);
+            const reg = regularizedDates.find(r => (r.date.split('T')[0] || r.date) === dayDate);
+            return {
+              ...day,
+              isPaidLeave,
+              isCasualLeave,
+              isRegularized: !!reg,
+              regularizationValue: reg?.value,
+              regularizationOriginalStatus: reg?.originalStatus,
+            };
+          });
+          after25Breakdown = enrichedAfter25;
+          after25Summary = {
+            fullDays: after25.fullDays,
+            halfDays: after25.halfDays,
+            absentDays: after25.absentDays,
+            lateDays: after25.lateDays || 0,
+            earlyExits: after25.earlyExits || 0,
+            totalWorkedHours: after25.totalWorkedHours,
+          };
+        }
+      } catch (err) {
+        console.warn('[EmployeeSelfService] Could not build after-25th attendance:', err);
+      }
+
       res.json({
         success: true,
         data: {
           month: month,
           summary: summary,
           dailyBreakdown: enrichedDailyBreakdown,
+          ...(after25Breakdown && after25Summary && { after25Breakdown, after25Summary }),
           leaveInfo: {
             paidLeaveDates: paidLeaveDates,
             casualLeaveDates: casualLeaveDates,
