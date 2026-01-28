@@ -316,7 +316,8 @@ export class EmployeeSelfServiceController {
 
   /**
    * GET /api/employee/attendance?month=YYYY-MM
-   * Get current employee's attendance for a specific month
+   * Get current employee's attendance for a specific month.
+   * For future months, returns empty attendance (no data) instead of error.
    */
   static async getAttendance(req: Request, res: Response): Promise<void> {
     try {
@@ -327,6 +328,41 @@ export class EmployeeSelfServiceController {
         res.status(401).json({
           success: false,
           error: 'Unauthorized',
+        });
+        return;
+      }
+
+      // Validate month format
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid month format. Use YYYY-MM',
+        });
+        return;
+      }
+
+      const { currentMonth } = await import('../utils/date.js');
+      if (month > currentMonth()) {
+        res.json({
+          success: true,
+          data: {
+            month,
+            summary: {
+              fullDays: 0,
+              halfDays: 0,
+              absentDays: 0,
+              holidayDays: 0,
+              lateDays: 0,
+              earlyExits: 0,
+              totalWorkedHours: 0,
+            },
+            dailyBreakdown: [],
+            leaveInfo: {
+              paidLeaveDates: [],
+              casualLeaveDates: [],
+              regularizedDates: [],
+            },
+          },
         });
         return;
       }
@@ -474,11 +510,12 @@ export class EmployeeSelfServiceController {
         });
       }
 
-      // Calculate summary statistics
+      // Calculate summary statistics (holiday not in fullDays or absentDays)
       const summary = {
         fullDays: attendance.fullDays,
         halfDays: attendance.halfDays,
         absentDays: attendance.absentDays,
+        holidayDays: attendance.holidayDays ?? 0,
         lateDays: attendance.lateDays || 0,
         earlyExits: attendance.earlyExits || 0,
         totalWorkedHours: attendance.totalWorkedHours,
@@ -519,6 +556,7 @@ export class EmployeeSelfServiceController {
             fullDays: after25.fullDays,
             halfDays: after25.halfDays,
             absentDays: after25.absentDays,
+            holidayDays: after25.holidayDays ?? 0,
             lateDays: after25.lateDays || 0,
             earlyExits: after25.earlyExits || 0,
             totalWorkedHours: after25.totalWorkedHours,

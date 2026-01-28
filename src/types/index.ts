@@ -298,6 +298,7 @@ export interface MonthlyAttendance {
   fullDays: number;
   halfDays: number;
   absentDays: number;
+  holidayDays: number; // Holidays: not in fullDays or absentDays; paid separately
   lateDays: number;
   lateBy30MinutesDays: number; // Count of days late by 30+ minutes
   earlyExits: number;
@@ -337,6 +338,7 @@ export interface AttendanceStats {
   fullDays: number;
   halfDays: number;
   absentDays: number;
+  holidayDays?: number; // Holidays (not in fullDays/absentDays; paid as present)
   lateDays: number; // Total late days (all late entries)
   lateBy30MinutesDays: number; // Count of days late by 30+ minutes
   lateBy10MinutesDays: number; // Count of days late by 10+ minutes (but not 30+ minutes)

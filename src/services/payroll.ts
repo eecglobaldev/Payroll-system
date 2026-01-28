@@ -131,7 +131,7 @@ export async function calculateAttendanceForDateRange(
   end: string,
   joinDateStr?: string,
   exitDateStr?: string
-): Promise<{ dailyBreakdown: DailyBreakdown[]; fullDays: number; halfDays: number; absentDays: number; lateDays: number; earlyExits: number; totalWorkedHours: number }> {
+): Promise<{ dailyBreakdown: DailyBreakdown[]; fullDays: number; halfDays: number; absentDays: number; holidayDays: number; lateDays: number; earlyExits: number; totalWorkedHours: number }> {
   const { AttendanceModel } = await import('../models/AttendanceModel.js');
   const userIdStr = String(userId);
   const logs = await AttendanceModel.getByEmployeeAndDateRange(userIdStr, start, end);
@@ -158,6 +158,7 @@ export async function calculateAttendanceForDateRange(
   let fullDays = 0;
   let halfDays = 0;
   let absentDays = 0;
+  let holidayDays = 0;
   let lateDays = 0;
   let earlyExits = 0;
   let totalWorkedHours = 0;
@@ -202,12 +203,12 @@ export async function calculateAttendanceForDateRange(
           const wasAbsent = dayEntry.status === 'absent';
           dayEntry.status = 'holiday';
           
-          if (wasAbsent && dayEntry.date >= effectiveStart && dayEntry.date <= effectiveEnd) {
+          if (dayEntry.date >= effectiveStart && dayEntry.date <= effectiveEnd) {
             const dayDateObj = createLocalDate(dayEntry.date);
             const isSunday = getDay(dayDateObj) === 0;
             if (!isSunday) {
-              absentDays--;
-              fullDays++; // Holiday counts as present (paid) day for salary
+              if (wasAbsent) absentDays--;
+              holidayDays++; // Holiday: not counted in present or absent; counted separately for salary
             }
           }
         }
@@ -243,6 +244,7 @@ export async function calculateAttendanceForDateRange(
     fullDays,
     halfDays,
     absentDays,
+    holidayDays,
     lateDays,
     earlyExits,
     totalWorkedHours,
@@ -939,6 +941,7 @@ export async function calculateMonthlyHours(
   let lateBy30MinutesDays = 0; // Count of days late by 30+ minutes
   let earlyExits = 0;
   let absentDays = 0;
+  let holidayDays = 0;
 
   // Get total days in salary cycle (26th to 25th)
   const { start, end } = getMonthRange(month);
@@ -1053,13 +1056,13 @@ export async function calculateMonthlyHours(
           const wasAbsent = dayEntry.status === 'absent';
           dayEntry.status = 'holiday';
           
-          // If it was counted as absent, decrement absent count and count holiday as present
-          if (wasAbsent && dayEntry.date >= effectiveStart && dayEntry.date <= effectiveEnd) {
+          // Holiday: not counted in present or absent; counted separately (holidayDays) for salary
+          if (dayEntry.date >= effectiveStart && dayEntry.date <= effectiveEnd) {
             const dayDateObj = createLocalDate(dayEntry.date);
             const isSunday = getDay(dayDateObj) === 0;
             if (!isSunday) {
-              absentDays--;
-              fullDays++; // Holiday counts as present (paid) day for salary
+              if (wasAbsent) absentDays--;
+              holidayDays++;
             }
           }
         }
@@ -1461,7 +1464,7 @@ export async function calculateMonthlyHours(
     currentDate.setDate(currentDate.getDate() + 1);
   }
 
-  console.log(`[Payroll] Attendance calculated: ${fullDays} full + ${halfDays} half days, ${absentDays} absent, ${lateDays} late (${lateBy30MinutesDays} by 30+ min), ${totalWorkedHours.toFixed(2)}h worked`);
+  console.log(`[Payroll] Attendance calculated: ${fullDays} full + ${halfDays} half days, ${absentDays} absent, ${holidayDays} holiday, ${lateDays} late (${lateBy30MinutesDays} by 30+ min), ${totalWorkedHours.toFixed(2)}h worked`);
   
   return {
     employeeCode: userId.toString(),
@@ -1471,6 +1474,7 @@ export async function calculateMonthlyHours(
     fullDays,
     halfDays,
     absentDays,
+    holidayDays,
     lateDays,
     lateBy30MinutesDays,
     earlyExits,
@@ -1899,8 +1903,9 @@ export async function calculateSalary(
     // Continue without leave checking - this is optional functionality
   }
 
-  // Calculate payable salary based on ACTUAL DAYS PRESENT + PAYABLE SUNDAYS + APPROVED LEAVES - LOP
+  // Calculate payable salary based on ACTUAL DAYS PRESENT + PAYABLE SUNDAYS + APPROVED LEAVES + HOLIDAYS - LOP
   const actualDaysWorked = attendance.fullDays + (attendance.halfDays * 0.5);
+  const holidayDays = attendance.holidayDays ?? 0;
   
   // Calculate leave credits based on explicit values (not implicit assumptions)
   // Use the calculated paidLeaveDays and casualLeaveDays (which already account for eligibility)
@@ -1908,7 +1913,7 @@ export async function calculateSalary(
   const approvedLeaveDays = paidLeaveDays + casualLeaveDays;
   
   const lopDeduction = lossOfPayDays * perDayRate;
-  const totalPayableDays = actualDaysWorked + payableSundays + approvedLeaveDays;
+  const totalPayableDays = actualDaysWorked + payableSundays + approvedLeaveDays + holidayDays;
   const payableBasedOnAttendance = (perDayRate * totalPayableDays) - lopDeduction;
   
   console.log(`[Payroll] Attendance summary: ${attendance.fullDays} full + ${attendance.halfDays} half days, ${attendance.absentDays} absent, ${attendance.lateDays} late, ${payableSundays} payable Sundays`);
@@ -2163,6 +2168,7 @@ export async function calculateSalary(
       fullDays: attendance.fullDays,
       halfDays: attendance.halfDays,
       absentDays: attendance.absentDays,
+      holidayDays: attendance.holidayDays ?? 0,
       lateDays: attendance.lateDays,
       lateBy30MinutesDays: lateBy30MinutesDays,
       lateBy10MinutesDays: Math.max(0, totalLateDays - lateBy30MinutesDays), // 10+ min but not 30+ min
