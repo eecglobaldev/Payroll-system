@@ -277,7 +277,7 @@ export interface DayHours {
   isLateBy30Minutes: boolean; // True if late by 30+ minutes from reporting time
   minutesLate: number | null; // Minutes late from shift start time (null if not late or can't calculate)
   isEarlyExit: boolean;
-  status: 'present' | 'absent' | 'half-day' | 'full-day' | 'partial' | 'not-active' | 'weekoff' | 'paid-leave' | 'casual-leave';
+  status: 'present' | 'absent' | 'half-day' | 'full-day' | 'partial' | 'not-active' | 'weekoff' | 'paid-leave' | 'casual-leave' | 'holiday';
   logCount: number;
   weekoffType?: 'paid' | 'unpaid'; // Only present when status is 'weekoff'
 }

@@ -190,6 +190,33 @@ export async function calculateAttendanceForDateRange(
     currentDate.setDate(currentDate.getDate() + 1);
   }
 
+  // Holiday pass: Mark holidays before other processing
+  try {
+    const { HolidayModel } = await import('../models/HolidayModel.js');
+    const holidays = await HolidayModel.getByDateRange(start, end);
+    const holidayDates = new Set(holidays.map(h => h.HolidayDate));
+    
+    for (const dayEntry of dailyBreakdown) {
+      if (holidayDates.has(dayEntry.date)) {
+        if (dayEntry.status === 'absent' || dayEntry.status === 'not-active') {
+          const wasAbsent = dayEntry.status === 'absent';
+          dayEntry.status = 'holiday';
+          
+          if (wasAbsent && dayEntry.date >= effectiveStart && dayEntry.date <= effectiveEnd) {
+            const dayDateObj = createLocalDate(dayEntry.date);
+            const isSunday = getDay(dayDateObj) === 0;
+            if (!isSunday) {
+              absentDays--;
+              fullDays++; // Holiday counts as present (paid) day for salary
+            }
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Payroll] calculateAttendanceForDateRange: Could not fetch holidays:', err.message);
+  }
+
   try {
     const { AttendanceRegularizationModel } = await import('../models/AttendanceRegularizationModel.js');
     const regularizations = await AttendanceRegularizationModel.getRegularizationsByDateRange(userIdStr, start, end);
@@ -1009,6 +1036,38 @@ export async function calculateMonthlyHours(
     
     // Move to next day
     currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  // Holiday pass: Mark holidays before other processing
+  // Only mark as holiday if status is 'absent' or 'not-active' (don't override if employee actually worked)
+  try {
+    const { HolidayModel } = await import('../models/HolidayModel.js');
+    const holidays = await HolidayModel.getByDateRange(effectiveStart, effectiveEnd);
+    const holidayDates = new Set(holidays.map(h => h.HolidayDate)); // YYYY-MM-DD strings
+    
+    for (const dayEntry of dailyBreakdown) {
+      if (holidayDates.has(dayEntry.date)) {
+        // Only mark as holiday if status is 'absent' or 'not-active'
+        // If employee worked (present/half-day), keep their actual status
+        if (dayEntry.status === 'absent' || dayEntry.status === 'not-active') {
+          const wasAbsent = dayEntry.status === 'absent';
+          dayEntry.status = 'holiday';
+          
+          // If it was counted as absent, decrement absent count and count holiday as present
+          if (wasAbsent && dayEntry.date >= effectiveStart && dayEntry.date <= effectiveEnd) {
+            const dayDateObj = createLocalDate(dayEntry.date);
+            const isSunday = getDay(dayDateObj) === 0;
+            if (!isSunday) {
+              absentDays--;
+              fullDays++; // Holiday counts as present (paid) day for salary
+            }
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Payroll] Could not fetch holidays:', err.message);
+    // Continue without holiday data - attendance will still be calculated
   }
 
   // Second pass: Apply attendance regularizations FIRST

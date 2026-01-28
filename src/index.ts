@@ -23,6 +23,7 @@ import shiftRoutes from './routes/shift.js';
 import overtimeRoutes from './routes/overtime.js';
 import employeeShiftAssignmentRoutes from './routes/employeeShiftAssignment.js';
 import authRoutes from './routes/auth.js';
+import holidayRoutes from './routes/holidayRoutes.js';
 
 // Initialize Express app
 const app: Application = express();
@@ -123,6 +124,7 @@ app.get('/', (_req: Request, res: Response) => {
       shifts: '/api/shifts (API key required)',
       overtime: '/api/overtime (API key required)',
       employeeShifts: '/api/employee-shifts (API key required)',
+      holidays: '/api/holidays (API key required)',
     },
     documentation: 'See README.md for API documentation',
   });
@@ -186,6 +188,7 @@ app.use('/api/leave', validateApiKey, leaveRoutes);
 app.use('/api/shifts', validateApiKey, shiftRoutes);
 app.use('/api/overtime', validateApiKey, overtimeRoutes);
 app.use('/api/employee-shifts', validateApiKey, employeeShiftAssignmentRoutes);
+app.use('/api/holidays', validateApiKey, holidayRoutes);
 
 /**
  * Error Handling
