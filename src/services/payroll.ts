@@ -1932,10 +1932,13 @@ export async function calculateSalary(
   // Grace period applies only to 10+ min late days (not 30+ min late days)
   // Note: Late deductions are applied directly in salary calculation, not stored separately
   // TODO: If late deduction calculations are uncommented, use these variables:
-  // const lateDeduction30Minutes = lateBy30MinutesDays * (perDayRate * 0.5);
-  // const lateBy10MinutesDays = Math.max(0, totalLateDays - lateBy30MinutesDays);
-  // const lateDays10MinExceedingGrace = Math.max(0, lateBy10MinutesDays - 3);
-  // const lateDeduction10Minutes = lateDays10MinExceedingGrace * (perDayRate * 0.25);
+  const lateDeduction30Minutes = lateBy30MinutesDays * (perDayRate * 0.5);
+  const lateBy10MinutesDays = Math.max(0, totalLateDays - lateBy30MinutesDays);
+  const lateDays10MinExceedingGrace = Math.max(0, lateBy10MinutesDays - 3);
+  const lateDeduction10Minutes = lateDays10MinExceedingGrace * (perDayRate * 0.25);
+
+  const lateDeduction = lateDeduction30Minutes + lateDeduction10Minutes;
+
   
 
   // Calculate overtime (per day, not monthly)
@@ -1963,7 +1966,7 @@ export async function calculateSalary(
   }
 
   // Note: totalDeductions calculated later when adjustments are fetched
-
+  const totalDeductions = parseFloat(lateDeduction.toFixed(2));
 
   // Calculate initial gross salary (includes overtime, but NOT incentive yet)
   // We'll add incentive later after fetching adjustments
@@ -2037,7 +2040,7 @@ export async function calculateSalary(
   // Calculate gross salary (includes overtime AND incentive)
   // Incentive is added to gross salary, so it affects TDS and Professional Tax calculations
   const grossSalaryWithIncentive = parseFloat(
-    (payableBasedOnAttendance + overtimeAmount + incentiveAmount).toFixed(2)
+    (payableBasedOnAttendance + overtimeAmount + incentiveAmount - totalDeductions).toFixed(2)
   );
 
   // Calculate cumulative salary from joining date to current month
@@ -2188,9 +2191,9 @@ export async function calculateSalary(
       hourlyRate: parseFloat(calculatedHourlyRate.toFixed(2)),
       absentDeduction: parseFloat(((expectedWorkingDays - totalPayableDays) * perDayRate).toFixed(2)),
       halfDayDeduction: parseFloat((attendance.halfDays * perDayRate * 0.5).toFixed(2)),
-      // lateDeduction: parseFloat(lateDeduction.toFixed(2)), // Total late deduction
-      // lateDeduction30Minutes: parseFloat(lateDeduction30Minutes.toFixed(2)), // 50% deduction for late by 30+ minutes
-      // lateDeduction10Minutes: parseFloat(lateDeduction10Minutes.toFixed(2)), // 25% deduction for 10+ min late days exceeding grace period
+      lateDeduction: parseFloat(lateDeduction.toFixed(2)), // Total late deduction
+      lateDeduction30Minutes: parseFloat(lateDeduction30Minutes.toFixed(2)), // 50% deduction for late by 30+ minutes
+      lateDeduction10Minutes: parseFloat(lateDeduction10Minutes.toFixed(2)), // 25% deduction for 10+ min late days exceeding grace period
       totalDeductions: totalDeductionsWithTDS,
       overtimeAmount: parseFloat(overtimeAmount.toFixed(2)),
       sundayPay: parseFloat((payableSundays * perDayRate).toFixed(2)),
