@@ -7,7 +7,7 @@
  * - MonthlyLeaveUsage: Month-by-month leave approvals (persists across sessions)
  */
 
-import { query, executeProcedure } from '../db/pool.js';
+import { query } from '../db/pool.js';
 import {
   EmployeeLeaveEntitlement,
   MonthlyLeaveUsage,
@@ -138,43 +138,12 @@ export class LeaveModel {
       ? this.stringifyLeaveDates(data.casualLeaveDates)
       : null;
 
-    // Try to use stored procedure first
-    try {
-      const result = await executeProcedure<{ Operation: string }>('upsertmonthlyleaveusage', {
-        employeeCode: data.employeeCode,
-        leaveMonth: data.month,
-        paidLeaveDaysUsed,
-        casualLeaveDaysUsed,
-        paidLeaveDates: paidLeaveDatesStr,
-        casualLeaveDates: casualLeaveDatesStr,
-        updatedBy: data.approvedBy || null,
-      });
-
-      const operation = result.recordset[0]?.Operation || 'UNKNOWN';
-
-      // Fetch the saved record
-      const savedRecord = await this.getMonthlyLeaveUsage(data.employeeCode, data.month);
-
-      if (!savedRecord) {
-        throw new Error('Failed to retrieve saved leave usage record');
-      }
-
-      return {
-        operation,
-        record: savedRecord,
-      };
-    } catch (error: any) {
-      // If stored procedure doesn't exist, use direct SQL upsert
-      if (error.message?.includes('function') || error.message?.includes('does not exist')) {
-        console.warn('[LeaveModel] Stored procedure not found, using direct SQL upsert');
-        return await this.upsertMonthlyLeaveUsageDirect(data, paidLeaveDaysUsed, casualLeaveDaysUsed, paidLeaveDatesStr, casualLeaveDatesStr);
-      }
-      throw error;
-    }
+    // Always use direct SQL: check then UPDATE or INSERT (avoids procedure duplicate key and ON CONFLICT quirks)
+    return await this.upsertMonthlyLeaveUsageDirect(data, paidLeaveDaysUsed, casualLeaveDaysUsed, paidLeaveDatesStr, casualLeaveDatesStr);
   }
 
   /**
-   * Direct SQL upsert (fallback if stored procedure doesn't exist)
+   * Direct SQL upsert: check if row exists, then UPDATE or INSERT (avoids duplicate key on pkey or unique)
    */
   private static async upsertMonthlyLeaveUsageDirect(
     data: SaveLeaveApprovalRequest,
@@ -183,33 +152,7 @@ export class LeaveModel {
     paidLeaveDatesStr: string | null,
     casualLeaveDatesStr: string | null
   ): Promise<{ operation: string; record: MonthlyLeaveUsage }> {
-    const sqlQuery = `
-      INSERT INTO monthlyleaveusage 
-        (employeecode, leavemonth, paidleavedaysused, casualleavedaysused, paidleavedates, casualleavedates, updatedby)
-      VALUES 
-        (@employeeCode, @leaveMonth, @paidLeaveDaysUsed, @casualLeaveDaysUsed, @paidLeaveDates, @casualLeaveDates, @updatedBy)
-      ON CONFLICT (employeecode, leavemonth) 
-      DO UPDATE SET
-        paidleavedaysused = EXCLUDED.paidleavedaysused,
-        casualleavedaysused = EXCLUDED.casualleavedaysused,
-        paidleavedates = EXCLUDED.paidleavedates,
-        casualleavedates = EXCLUDED.casualleavedates,
-        updatedat = CURRENT_TIMESTAMP,
-        updatedby = EXCLUDED.updatedby
-      RETURNING 
-        monthlyleaveusageid,
-        employeecode,
-        leavemonth,
-        paidleavedaysused,
-        casualleavedaysused,
-        paidleavedates,
-        casualleavedates,
-        createdat,
-        updatedat,
-        updatedby
-    `;
-
-    const result = await query<MonthlyLeaveUsage>(sqlQuery, {
+    const params = {
       employeeCode: data.employeeCode,
       leaveMonth: data.month,
       paidLeaveDaysUsed,
@@ -217,21 +160,59 @@ export class LeaveModel {
       paidLeaveDates: paidLeaveDatesStr,
       casualLeaveDates: casualLeaveDatesStr,
       updatedBy: data.approvedBy || null,
-    });
+    };
 
-    if (result.recordset.length === 0) {
-      throw new Error('Failed to upsert monthly leave usage');
+    const existing = await this.getMonthlyLeaveUsage(data.employeeCode, data.month);
+
+    if (existing) {
+      const updateQuery = `
+        UPDATE monthlyleaveusage
+        SET paidleavedaysused = @paidLeaveDaysUsed,
+            casualleavedaysused = @casualLeaveDaysUsed,
+            paidleavedates = @paidLeaveDates,
+            casualleavedates = @casualLeaveDates,
+            updatedat = CURRENT_TIMESTAMP,
+            updatedby = @updatedBy
+        WHERE employeecode = @employeeCode AND leavemonth = @leaveMonth
+        RETURNING monthlyleaveusageid, employeecode, leavemonth, paidleavedaysused, casualleavedaysused,
+          paidleavedates, casualleavedates, createdat, updatedat, updatedby
+      `;
+      const result = await query<MonthlyLeaveUsage>(updateQuery, params);
+      if (result.recordset.length === 0) throw new Error('Failed to update monthly leave usage');
+      return { operation: 'updated', record: this.mapToMonthlyLeaveUsage(result.recordset[0]) };
     }
 
-    // Determine operation type
-    const existing = await this.getMonthlyLeaveUsage(data.employeeCode, data.month);
-    const operation = existing ? 'updated' : 'created';
-
-    // Map PostgreSQL lowercase column names to PascalCase
-    return {
-      operation,
-      record: this.mapToMonthlyLeaveUsage(result.recordset[0]),
-    };
+    const insertQuery = `
+      INSERT INTO monthlyleaveusage
+        (employeecode, leavemonth, paidleavedaysused, casualleavedaysused, paidleavedates, casualleavedates, updatedby)
+      VALUES (@employeeCode, @leaveMonth, @paidLeaveDaysUsed, @casualLeaveDaysUsed, @paidLeaveDates, @casualLeaveDates, @updatedBy)
+      RETURNING monthlyleaveusageid, employeecode, leavemonth, paidleavedaysused, casualleavedaysused,
+        paidleavedates, casualleavedates, createdat, updatedat, updatedby
+    `;
+    try {
+      const result = await query<MonthlyLeaveUsage>(insertQuery, params);
+      if (result.recordset.length === 0) throw new Error('Failed to insert monthly leave usage');
+      return { operation: 'created', record: this.mapToMonthlyLeaveUsage(result.recordset[0]) };
+    } catch (err: any) {
+      const isDuplicate = (err?.code === '23505') || (String(err?.message || '').includes('duplicate key') || String(err?.message || '').includes('unique constraint'));
+      if (!isDuplicate) throw err;
+      console.warn('[LeaveModel] INSERT duplicate key, retrying as UPDATE:', err?.message);
+      const updateQuery = `
+        UPDATE monthlyleaveusage
+        SET paidleavedaysused = @paidLeaveDaysUsed,
+            casualleavedaysused = @casualLeaveDaysUsed,
+            paidleavedates = @paidLeaveDates,
+            casualleavedates = @casualLeaveDates,
+            updatedat = CURRENT_TIMESTAMP,
+            updatedby = @updatedBy
+        WHERE employeecode = @employeeCode AND leavemonth = @leaveMonth
+        RETURNING monthlyleaveusageid, employeecode, leavemonth, paidleavedaysused, casualleavedaysused,
+          paidleavedates, casualleavedates, createdat, updatedat, updatedby
+      `;
+      const result = await query<MonthlyLeaveUsage>(updateQuery, params);
+      if (result.recordset.length === 0) throw new Error('Failed to update monthly leave usage after duplicate key');
+      return { operation: 'updated', record: this.mapToMonthlyLeaveUsage(result.recordset[0]) };
+    }
   }
 
   /**
