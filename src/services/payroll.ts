@@ -234,7 +234,10 @@ export async function calculateAttendanceForDateRange(
         else if (originalStatus === 'half-day') halfDays--;
         if (regularizedStatus === 'full-day') fullDays++;
         else if (regularizedStatus === 'half-day') halfDays++;
-        if (dayEntry.isLate && (originalStatus === 'absent' || originalStatus === 'half-day')) lateDays--;
+        // Only decrement lateDays if this day was actually counted as late in the first pass.
+        // Absent days are never counted as late; only full-day and half-day are. So we only
+        // remove from late count when we're regularizing a half-day (that was counted as late).
+        if (dayEntry.isLate && originalStatus === 'half-day') lateDays--;
       }
     }
   } catch (_) {}
@@ -1120,9 +1123,10 @@ export async function calculateMonthlyHours(
             halfDays++;
           }
           
-          // If this day was counted as late, remove it from late count
-          // Regularized days should NOT count as late (they were absent/half-day, converted to present)
-          if (dayEntry.isLate && (originalStatus === 'absent' || originalStatus === 'half-day')) {
+          // Only decrement lateDays if this day was actually counted as late in the first pass.
+          // Absent days are never counted as late; only full-day and half-day are. So we only
+          // remove from late count when we're regularizing a half-day (that was counted as late).
+          if (dayEntry.isLate && originalStatus === 'half-day') {
             lateDays--;
           }
           

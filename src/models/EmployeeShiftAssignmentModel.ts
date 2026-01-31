@@ -234,19 +234,19 @@ export class EmployeeShiftAssignmentModel {
   }
 
   /**
-   * Helper: Map database row to EmployeeShiftAssignment interface
+   * Helper: Map database row to EmployeeShiftAssignment interface.
    */
   private static mapToShiftAssignment(row: any): EmployeeShiftAssignment {
+    const fromVal = row.fromdate ?? row.FromDate;
+    const toVal = row.todate ?? row.ToDate;
+    const formatDateValue = (value: unknown): string =>
+      value instanceof Date ? value.toISOString().split('T')[0] : (value as string);
     return {
       Id: row.id || row.Id,
       EmployeeCode: row.employeecode || row.EmployeeCode,
       ShiftName: row.shiftname || row.ShiftName,
-      FromDate: (row.fromdate || row.FromDate) instanceof Date 
-        ? (row.fromdate || row.FromDate).toISOString().split('T')[0] 
-        : (row.fromdate || row.FromDate),
-      ToDate: (row.todate || row.ToDate) instanceof Date 
-        ? (row.todate || row.ToDate).toISOString().split('T')[0] 
-        : (row.todate || row.ToDate),
+      FromDate: fromVal instanceof Date ? formatDateValue(fromVal) : fromVal,
+      ToDate: toVal instanceof Date ? formatDateValue(toVal) : toVal,
       CreatedAt: row.createdat || row.CreatedAt,
     };
   }

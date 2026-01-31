@@ -142,6 +142,39 @@ npm run dev
 
 Uses `tsx` to run TypeScript directly with hot-reload.
 
+### Running with UTC timezone (local development)
+
+The backend uses the server timezone for date/time logic (e.g. late login, shift assignments). To run locally in UTC so behavior matches production (or to avoid timezone-related bugs):
+
+**Option 1 – npm script (recommended)**
+
+```bash
+npm run dev:utc
+```
+
+**Option 2 – set TZ before the command**
+
+```bash
+TZ=UTC npm run dev
+```
+
+**Option 3 – export TZ in your shell (affects all commands in that terminal)**
+
+```bash
+export TZ=UTC
+npm run dev
+```
+
+**Option 4 – in `.env` (if your runner loads it)**
+
+Add or set:
+
+```
+TZ=UTC
+```
+
+Not all tools read `TZ` from `.env`; the npm script or `TZ=UTC` in the shell is more reliable.
+
 ### Production Mode
 
 ```bash

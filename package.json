@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
+    "dev:utc": "TZ=UTC tsx watch src/index.ts",
     "start": "node dist/index.js",
     "start:ts": "tsx src/index.ts",
     "build:prod": "tsc --project tsconfig.prod.json",
