@@ -28,6 +28,11 @@ services:
       failure_threshold: 3
     
     envs:
+      - key: TZ
+        value: Asia/Kolkata
+        scope: RUN_TIME
+        type: GENERAL
+      
       - key: NODE_ENV
         value: production
         scope: RUN_TIME
