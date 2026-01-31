@@ -80,8 +80,8 @@ export class MonthlyOTModel {
         record
       };
     } catch (error: any) {
-      // If stored procedure doesn't exist, try direct SQL
-      if (error.message?.includes('function') || error.message?.includes('does not exist')) {
+      // Only fall back when the procedure/function is missing (not when table is missing from direct SQL)
+      if (error.message?.includes('function')) {
         console.warn('[MonthlyOT] Stored procedure not found, using direct SQL upsert');
         return await this.upsertOvertimeStatusDirect(employeeCode, month, isOvertimeEnabled);
       }
@@ -90,64 +90,43 @@ export class MonthlyOTModel {
   }
 
   /**
-   * Direct SQL upsert (fallback if stored procedure doesn't exist)
+   * Direct SQL upsert (fallback if stored procedure doesn't exist).
+   * Uses ON CONFLICT to avoid duplicate key when a row already exists
+   * (e.g. getOvertimeStatus returned null due to type/case mismatch).
    */
   private static async upsertOvertimeStatusDirect(
     employeeCode: string,
     month: string,
     isOvertimeEnabled: boolean
   ): Promise<{ operation: string; record: MonthlyOT }> {
-    // Check if record exists
-    const existing = await this.getOvertimeStatus(employeeCode, month);
+    const sqlQuery = `
+      INSERT INTO monthlyot (employeecode, month, isovertimeenabled, createdat)
+      VALUES (@employeeCode, @month, @isOvertimeEnabled, CURRENT_TIMESTAMP)
+      ON CONFLICT (employeecode, month) DO UPDATE SET
+        isovertimeenabled = EXCLUDED.isovertimeenabled,
+        updatedat = CURRENT_TIMESTAMP
+      RETURNING 
+        id,
+        employeecode,
+        month,
+        isovertimeenabled,
+        createdat,
+        updatedat
+    `;
 
-    if (existing) {
-      // Update existing record
-      const sqlQuery = `
-        UPDATE monthlyot
-        SET isovertimeenabled = @isOvertimeEnabled,
-            updatedat = CURRENT_TIMESTAMP
-        WHERE employeecode = @employeeCode 
-          AND month = @month
-        RETURNING 
-          id,
-          employeecode,
-          month,
-          isovertimeenabled,
-          createdat,
-          updatedat
-      `;
+    const result = await query<{ id: number; employeecode: string; month: string; isovertimeenabled: boolean; createdat: Date; updatedat: Date | null }>(
+      sqlQuery,
+      { employeeCode, month, isOvertimeEnabled }
+    );
 
-      await query(sqlQuery, { employeeCode, month, isOvertimeEnabled });
-
-      const record = await this.getOvertimeStatus(employeeCode, month);
-      if (!record) {
-        throw new Error('Failed to retrieve overtime status after update');
-      }
-
-      return { operation: 'updated', record };
-    } else {
-      // Insert new record
-      const sqlQuery = `
-        INSERT INTO monthlyot (employeecode, month, isovertimeenabled, createdat)
-        VALUES (@employeeCode, @month, @isOvertimeEnabled, CURRENT_TIMESTAMP)
-        RETURNING 
-          id,
-          employeecode,
-          month,
-          isovertimeenabled,
-          createdat,
-          updatedat
-      `;
-
-      await query(sqlQuery, { employeeCode, month, isOvertimeEnabled });
-
-      const record = await this.getOvertimeStatus(employeeCode, month);
-      if (!record) {
-        throw new Error('Failed to retrieve overtime status after insert');
-      }
-
-      return { operation: 'created', record };
+    if (!result.recordset || result.recordset.length === 0) {
+      throw new Error('Failed to upsert overtime status');
     }
+
+    const row = result.recordset[0];
+    const record = this.mapToMonthlyOT(row);
+
+    return { operation: 'updated', record };
   }
 
   /**

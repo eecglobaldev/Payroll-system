@@ -115,6 +115,7 @@ export class OvertimeController {
         success: false,
         error: 'Database Error',
         message: 'Failed to update overtime status',
+        details: error.message,
       });
     }
   }
