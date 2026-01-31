@@ -798,11 +798,14 @@ export default function Salary() {
       console.log('[Salary] Saving regularizations to database');
       
       // Build payload with original status from attendance breakdown and value
+      // For already-regularized days, dayEntry.status is 'full-day' but originalStatus holds the real pre-regularization value.
       const dates = regularizedDates.map(reg => {
         const dayEntry = attendanceBreakdown?.dailyBreakdown.find(d => d.date === reg.date);
+        const rawStatus = (dayEntry as any)?.originalStatus ?? dayEntry?.status;
+        const originalStatus = rawStatus === 'absent' || rawStatus === 'half-day' ? rawStatus : 'absent';
         return {
           date: reg.date,
-          originalStatus: dayEntry?.status || 'absent',
+          originalStatus,
           regularizedStatus: reg.value === 0.5 ? 'half-day' : 'full-day',
           reason: regularizationReason || undefined
         };

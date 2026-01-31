@@ -48,13 +48,17 @@ export class AttendanceRegularizationController {
           return;
         }
 
-        if (!dateObj.originalStatus || !['absent', 'half-day'].includes(dateObj.originalStatus)) {
+        // Normalize originalStatus: already-regularized days may be sent as 'full-day'; treat as 'absent'
+        const raw = (dateObj.originalStatus || '').toLowerCase();
+        const originalStatus = raw === 'half-day' ? 'half-day' : 'absent';
+        if (raw && raw !== 'absent' && raw !== 'half-day' && raw !== 'full-day') {
           res.status(400).json({
             success: false,
             message: `Invalid originalStatus for date ${dateObj.date}. Must be 'absent' or 'half-day'`
           });
           return;
         }
+        (dateObj as any).originalStatus = originalStatus;
       }
 
       // Save regularizations
